@@ -1,0 +1,2379 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>H5OS 1.5.2</title>
+    <meta name="theme-color" content="#1e2a44">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="H5OS">
+    <link rel="manifest" href="manifest.json?v=1.5.2">
+    <link rel="apple-touch-icon" href="icon-192x192.png">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root {
+            --default-bg: #1e2a44;
+            --taskbar-bg: rgba(15, 23, 42, 0.85);
+            --accent: #4ecca3;
+            --text-color: #ffffff;
+            --window-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --panel-blur: blur(25px);
+            --menu-bg: rgba(15, 23, 42, 0.95);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body, html { 
+            margin: 0; padding: 0; height: 100%; 
+            font-family: 'Inter', 'Segoe UI', sans-serif; 
+            overflow: hidden; 
+            background: var(--default-bg);
+            background-size: cover;
+            background-position: center;
+            color: var(--text-color); 
+            user-select: none;
+        }
+
+        #desktop { position: relative; width: 100vw; height: 100vh; overflow: hidden; z-index: 1; }
+        
+/* 1. Sjednocený základ pro všechna ovládací kolečka */
+.btn-action-circle {
+    position: absolute; 
+    width: 28px !important;   /* Vynucená šířka */
+    height: 28px !important;  /* Vynucená výška */
+    border-radius: 50%; 
+    z-index: 25; 
+    display: none;      
+    align-items: center; 
+    justify-content: center; 
+    cursor: pointer; 
+    border: 2px solid white; 
+    box-shadow: 0 4px 8px rgba(0,0,0,0.4); 
+    color: white;
+    top: -12px;         
+    padding: 0;
+}
+
+/* Zobrazení v režimu úprav */
+.rename-mode .btn-action-circle { display: flex !important; }
+
+/* FIX PRO IKONY: Kolečka u ikon nesmí dědit 'scale' celé ikony */
+/* Pokud je ikona zvětšená, kolečko musíme o stejný poměr zmenšit */
+.icon .btn-action-circle {
+    transform: scale(calc(1 / var(--icon-scale, 1))) !important;
+    transform-origin: center;
+}
+
+/* 2. Specifické pozice pro Widgety */
+.widget .btn-delete-item { background: #ef4444; left: -12px; }
+
+/* 3. Specifické pozice pro Ikony */
+.icon .btn-delete-item { background: #ef4444; left: -10px; }
+.icon .btn-edit-item { background: #3b82f6; right: -10px; }
+
+/* Tento řádek zajistí, že kolečka na ikonách nebudou ovlivněna zvětšením (scale) ikon */
+.icon .btn-action-circle i { transform: none !important; }
+
+/* Widgety */
+.widget {
+    position: absolute; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(15px);
+    border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);
+    z-index: 2; display: flex; flex-direction: column;
+}
+.widget-content { flex: 1; width: 100%; height: 100%; overflow: hidden; border-radius: 20px; }
+.widget-content iframe { width: 100%; height: 100%; border: none; pointer-events: auto; }
+.widget-overlay { position: absolute; inset: 0; z-index: 5; display: none; cursor: move; border: 2px dashed var(--accent); border-radius: 20px; }
+.rename-mode .widget-overlay { display: block; }
+.widget-resizer { position: absolute; right: -8px; bottom: -8px; width: 24px; height: 24px; cursor: nwse-resize; z-index: 20; display: none; background: var(--accent); border-radius: 50%; border: 2px solid white; }
+.rename-mode .widget-resizer { display: block; }
+
+/* Ikony */
+.icon {
+    position: absolute; width: 100px; display: flex; flex-direction: column; align-items: center;
+    cursor: pointer; padding: 10px; border-radius: 12px; transition: background 0.2s; z-index: 10;
+}
+.icon:hover { background: rgba(255, 255, 255, 0.1); }
+.rename-mode .icon { cursor: move; border: 1px dashed var(--accent); background: rgba(255, 255, 255, 0.1); }
+.icon i { font-size: 40px; margin-bottom: 6px; color: var(--accent); filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); pointer-events: none; }
+.icon span { font-size: 11px; text-align: center; font-weight: 500; text-shadow: 0 2px 4px rgba(0,0,0,0.8); word-break: break-all; pointer-events: none; color: var(--text-color); }
+.icon img { pointer-events: none; -webkit-user-drag: none; user-select: none; }
+
+        /* Okna */
+        .window {
+            position: absolute; background: #f8fafc; border-radius: 12px;
+            box-shadow: var(--window-shadow); display: flex; flex-direction: column;
+            min-width: 320px; min-height: 200px; overflow: hidden; z-index: 100;
+        }
+        .window.minimized { transform: scale(0.8) translateY(100vh); opacity: 0; pointer-events: none; }
+.window.app-fullscreen {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 9999;
+    border-radius: 0;
+}
+
+/* Skrytí stínu a okrajů ve fullscreenu pro čistý vzhled */
+.window.app-fullscreen .window-content {
+    border-radius: 0;
+}
+        .window-header { height: 42px; background: #1e293b; color: white; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; cursor: move; flex-shrink: 0; }
+        .window-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+        .window-controls { display: flex; gap: 8px; }
+        .control-btn { width: 14px; height: 14px; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+/* Změna barev pro nové funkce */
+.btn-min { background: #fbbf24; } /* Žlutá pro minimalizaci */
+.btn-max { background: #22c55e; } /* Zelená pro fullscreen */
+.btn-close { background: #ef4444; } /* Červená pro zavření zůstává */
+        .window-content { flex: 1; background: white; position: relative; color: #1e293b; overflow: hidden;    width: 100%;     height: 100%; }
+.window-content iframe { 
+    width: 100%;    /* PŘIDÁNO - klíčové pro roztažení aplikace */
+    height: 100%;   /* PŘIDÁNO - klíčové pro roztažení aplikace */
+    border: none; 
+    display: block; 
+}
+        .win-resizer { position: absolute; width: 20px; height: 20px; right: 0; bottom: 0; cursor: nwse-resize; z-index: 20; }
+
+        /* Nastavení v okně */
+        .settings-layout { display: flex; height: 100%; background: #f1f5f9; overflow: hidden; }
+        .settings-sidebar { width: 160px; background: #e2e8f0; border-right: 1px solid #cbd5e1; padding: 10px; display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; overflow-y: auto; }
+        .settings-main { flex: 1; padding: 20px; overflow-y: auto; }
+        .side-btn { background: none; border: none; padding: 10px; border-radius: 8px; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; font-weight: 600; }
+        .side-btn:hover { background: #cbd5e1; }
+        .side-btn.active { background: var(--accent); color: #000; }
+        
+        .settings-section { display: none; }
+        .settings-section.active { display: block; }
+        .settings-card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f1f5f9; gap: 10px; }
+        .settings-row:last-child { border: none; }
+
+        /* Jazykové možnosti - optimalizace pro místo */
+        .lang-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+        .lang-option {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; border-radius: 10px; cursor: pointer; transition: 0.2s;
+            background: #ffffff; border: 1px solid #e2e8f0; font-size: 13px;
+        }
+        .lang-option:hover { border-color: var(--accent); }
+        .lang-option.active { border-color: var(--accent); background: #f0fdf4; font-weight: bold; }
+
+        /* Taskbar */
+        #taskbar {
+            position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+            width: calc(100% - 16px); max-width: 1400px; min-height: 56px;
+            display: flex; align-items: center; gap: 10px; z-index: 9999;
+            transition: 0.25s ease;
+        }
+        .tb-pill {
+            background: var(--taskbar-bg);
+            backdrop-filter: var(--panel-blur);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 999px;
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+        }
+        #running-apps {
+            display: flex; gap: 8px; flex: 1; overflow-x: auto; scrollbar-width: none;
+            padding: 7px 10px; min-width: 0;
+        }
+        #running-apps::-webkit-scrollbar { display: none; }
+        .tb-btn {
+            background: rgba(255,255,255,0.08); border: none; color: var(--text-color); padding: 0 12px; height: 42px;
+            border-radius: 999px; cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; transition: 0.2s;
+        }
+        .tb-btn:hover { background: rgba(255,255,255,0.14); }
+        .tb-btn.start {
+            width: 56px; min-width: 56px; height: 56px; padding: 0; color: var(--accent); background: var(--taskbar-bg);
+            backdrop-filter: var(--panel-blur); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+        }
+        .tb-btn.start:hover { transform: scale(1.03); background: rgba(255,255,255,0.16); }
+        .running-app { min-width: 42px; width: 42px; }
+        .running-app.active::after { content: ''; position: absolute; bottom: 5px; left: 28%; width: 44%; height: 3px; background: var(--accent); border-radius: 2px; }
+        .taskbar-clock { padding: 0 18px; gap: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .taskbar-clock .clock-value { font-size: 24px; font-weight: 700; line-height: 1; }
+        .taskbar-clock .clock-sep, .taskbar-clock .date-value { font-size: 15px; font-weight: 600; line-height: 1; opacity: 0.9; }
+        .taskbar-actions { padding: 0 8px; gap: 8px; }
+
+        body.taskbar-style-old #taskbar {
+            gap: 0; background: var(--taskbar-bg); backdrop-filter: var(--panel-blur); border-radius: 18px; border: 1px solid rgba(255,255,255,0.1); padding: 0 15px; min-height: 55px;
+        }
+        body.taskbar-style-old .tb-pill { background: transparent; backdrop-filter: none; border: none; box-shadow: none; min-height: 0; border-radius: 0; }
+        body.taskbar-style-old #running-apps { margin: 0 15px; padding: 0; }
+        body.taskbar-style-old .tb-btn.start { width: 48px; min-width: 48px; height: 42px; border-radius: 12px; box-shadow: none; border: none; background: rgba(255,255,255,0.15); }
+        body.taskbar-style-old .taskbar-clock { padding: 0; gap: 8px; min-width: 180px; }
+        body.taskbar-style-old .taskbar-clock .clock-value { font-size: 24px; font-weight: 700; }
+        body.taskbar-style-old .taskbar-clock .clock-sep, body.taskbar-style-old .taskbar-clock .date-value { font-size: 14px; font-weight: 600; }
+        body.taskbar-style-old .taskbar-actions { padding-left: 15px; border-left: 1px solid rgba(255,255,255,0.1); }
+
+        /* Start Menu */
+        #start-container { position: absolute; bottom: 75px; left: 1%; display: none; gap: 10px; z-index: 10000; }
+        #start-container.active { display: flex; }
+        .menu-panel { background: var(--menu-bg); backdrop-filter: var(--panel-blur); border-radius: 20px; padding: 12px; width: 220px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 4px; }
+        .menu-panel.sub { width: 260px; display: none; max-height: 500px; overflow-y: auto; }
+        .menu-panel.sub.active { display: flex; }
+        .menu-item { background: transparent; border: none; color: white; padding: 10px; border-radius: 10px; text-align: left; cursor: pointer; display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+        .menu-item:hover { background: rgba(255,255,255,0.1); }
+        .item-label { display: flex; align-items: center; gap: 10px; }
+
+        input[type="color"] { border: none; width: 28px; height: 28px; border-radius: 50%; background: none; cursor: pointer; padding: 0; }
+        .btn-p { background: var(--accent); color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 12px; }
+        .btn-s { background: #cbd5e1; color: #1e293b; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 12px; }
+        
+        #drop-indicator { position: fixed; inset: 0; z-index: 10005; background: rgba(0,0,0, 0.6); border: 5px dashed var(--accent); display: none; pointer-events: none; align-items: center; justify-content: center; }
+        #drop-indicator h2 { color: black; background: var(--accent); padding: 25px 50px; border-radius: 50px; font-size: 24px; box-shadow: 0 15px 40px rgba(0,0,0,0.6); }
+
+/* Modální okno editoru */
+#modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(10px);
+    z-index: 30000; display: none; align-items: center; justify-content: center;
+}
+.modal {
+    background: #1e293b; width: 320px; padding: 25px; border-radius: 24px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+}
+.modal input {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #334155;
+    background: #0f172a; color: white; margin: 15px 0; outline: none;
+}
+.icon-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; max-height: 150px; overflow-y: auto; padding: 5px; }
+.icon-choice { 
+    aspect-ratio: 1; display: flex; align-items: center; justify-content: center; 
+    background: rgba(255,255,255,0.05); border-radius: 10px; cursor: pointer; border: 2px solid transparent; 
+}
+.icon-choice.selected { border-color: var(--accent); background: rgba(78, 204, 163, 0.1); }
+    </style>
+</head>
+<body id="body-main">
+
+    <div id="desktop"></div>
+    <div id="drop-indicator"><h2 id="drop-text">Uvolněte pro instalaci</h2></div>
+
+    <!-- Start Menu -->
+    <div id="start-container">
+        <div class="menu-panel">
+            <div style="font-size: 10px; opacity: 0.5; padding: 5px 10px; font-weight: 900; color: var(--accent); letter-spacing: 1px;" id="menu-tag">MENU</div>
+            <button class="menu-item" onclick="toggleSub('apps', event)">
+                <span class="item-label"><i data-lucide="layout"></i> <span id="menu-apps">Aplikace</span></span>
+                <i data-lucide="chevron-right" size="14"></i>
+            </button>
+            <button class="menu-item" onclick="openSettings(); startContainer.classList.remove('active');">
+                <span class="item-label"><i data-lucide="settings"></i> <span id="menu-settings">Nastavení</span></span>
+            </button>
+            <button class="menu-item" onclick="openAboutSystem(); startContainer.classList.remove('active');">
+                <span class="item-label"><i data-lucide="info"></i> <span id="menu-about-system">O systému</span></span>
+            </button>
+            <button class="menu-item" id="menu-install-pwa-btn" onclick="handlePwaMenuAction(); startContainer.classList.remove('active');" style="display:none;">
+                <span class="item-label"><i data-lucide="download"></i> <span id="menu-install-pwa">Instalovat aplikaci</span></span>
+            </button>
+            <div style="flex: 1; min-height: 40px;"></div>
+            <div style="padding: 10px; font-size: 10px; opacity: 0.4; border-top: 1px solid rgba(255,255,255,0.1);">H5OS 1.5.2</div>
+        </div>
+
+        <div class="menu-panel sub" id="sub-apps">
+            <div style="font-size: 10px; opacity: 0.5; padding: 5px 10px; font-weight: 900; color: var(--accent); letter-spacing: 1px;" id="launch-tag">SPUSTIT</div>
+            <div id="app-list"></div>
+        </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div id="taskbar">
+        <button class="tb-btn start" id="start-btn" title="Start"><i data-lucide="play"></i></button>
+        <div id="running-apps" class="tb-pill"></div>
+        <div class="tb-pill taskbar-clock">
+            <div id="clock-t" class="clock-value">00:00</div>
+            <div class="clock-sep">/</div>
+            <div id="clock-d" class="date-value">01.01.2024</div>
+        </div>
+        <div class="tb-pill taskbar-actions">
+            <button class="tb-btn" id="edit-mode-btn" onclick="toggleEditMode()" title="Úprava plochy">
+                <i data-lucide="pencil-ruler" id="edit-mode-icon" size="18"></i>
+            </button>
+            <button class="tb-btn" id="fullscreen-btn" onclick="toggleSystemFullscreen()" title="Celá obrazovka">
+                <i data-lucide="maximize" id="fs-icon" size="18"></i>
+            </button>
+        </div>
+    </div>
+    
+    
+<div id="modal-overlay">
+    <div class="modal" id="app-editor">
+        <h3 style="margin:0; color:white;">Upravit aplikaci</h3>
+        <input type="text" id="edit-name" placeholder="Název aplikace">
+        <div style="font-size:10px; color:var(--accent); font-weight:bold; margin-bottom:10px;">IKONA</div>
+        <div class="icon-grid" id="edit-icons"></div>
+        <div style="font-size:10px; color:var(--accent); font-weight:bold; margin-bottom:8px;">SLOŽKA</div>
+        <select id="edit-folder" style="width:100%; padding:12px; border-radius:10px; border:1px solid #334155; background:#0f172a; color:white; margin:0 0 15px 0; outline:none;"></select>
+        <div style="font-size:10px; color:var(--accent); font-weight:bold; margin-bottom:8px;">VLASTNÍ IKONA</div>
+        <div style="display:flex; gap:8px; align-items:center; margin:0 0 15px 0;">
+            <button type="button" onclick="document.getElementById('edit-custom-icon-input').click()" style="flex:1; padding:12px; background:#334155; border:none; color:white; border-radius:10px; cursor:pointer;">Nahrát z PC</button>
+            <button type="button" onclick="removeCustomIcon()" style="padding:12px; background:#7f1d1d; border:none; color:white; border-radius:10px; cursor:pointer;">Odebrat</button>
+        </div>
+        <div id="edit-custom-icon-preview" style="display:flex; justify-content:center; align-items:center; min-height:54px; margin:0 0 15px 0;"></div>
+        <input type="file" id="edit-custom-icon-input" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.png,.jpg,.jpeg,.webp,.gif,.svg,.ico" style="display:none">
+        <button onclick="saveEdit()" style="width:100%; padding:12px; background:var(--accent); border:none; border-radius:10px; font-weight:bold; cursor:pointer;">ULOŽIT</button>
+        <button onclick="exportCurrentItem()" style="width:100%; padding:10px; background:#334155; border:none; color:white; margin-top:10px; border-radius:10px; cursor:pointer;">Uložit do PC</button>
+        <button onclick="closeModal()" style="width:100%; padding:10px; background:transparent; border:none; color:white; margin-top:10px; cursor:pointer;">Zrušit</button>
+    </div>
+</div>
+
+    <!-- Skryté vstupy -->
+    <input type="file" id="bg-upload" style="display:none" accept="image/*">
+    <input type="file" id="app-upload-input" style="display:none" accept=".h5ap,.html,.zip,.h5az,.txt,.md,.json,.js,.css,.png,.jpg,.jpeg,.webp,.gif,.svg,.ico" multiple>
+    <input type="file" id="widget-upload-input" style="display:none" accept=".h5wg">
+    <input type="file" id="restore-upload" style="display:none" accept=".json">
+
+    <script>
+const dbName = "H5OS_DB_V10_0_5";
+const storeName = "apps";
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath: "id" });
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function saveToDB(data) {
+    const db = await openDB();
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).put(data);
+}
+
+async function getFromDB(id) {
+    const db = await openDB();
+    return new Promise(res => {
+        const req = db.transaction(storeName).objectStore(storeName).get(id);
+        req.onsuccess = () => res(req.result);
+    });
+}
+
+function normalizePackagePath(path) {
+    return String(path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\//, '');
+}
+
+function joinPackagePath(basePath, relativePath) {
+    const cleanBase = normalizePackagePath(basePath);
+    const cleanRelative = normalizePackagePath(relativePath);
+    const baseParts = cleanBase ? cleanBase.split('/').filter(Boolean) : [];
+    const relParts = cleanRelative.split('/').filter(Boolean);
+    for (const part of relParts) {
+        if (!part || part === '.') continue;
+        if (part === '..') {
+            if (baseParts.length) baseParts.pop();
+        } else {
+            baseParts.push(part);
+        }
+    }
+    return baseParts.join('/');
+}
+
+function getMimeTypeForPath(path) {
+    const lower = normalizePackagePath(path).toLowerCase();
+    if (lower.endsWith('.css')) return 'text/css';
+    if (lower.endsWith('.js') || lower.endsWith('.mjs')) return 'text/javascript';
+    if (lower.endsWith('.json')) return 'application/json';
+    if (lower.endsWith('.svg')) return 'image/svg+xml';
+    if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.ico')) return 'image/x-icon';
+    if (lower.endsWith('.bmp')) return 'image/bmp';
+    if (lower.endsWith('.avif')) return 'image/avif';
+    if (lower.endsWith('.woff')) return 'font/woff';
+    if (lower.endsWith('.woff2')) return 'font/woff2';
+    if (lower.endsWith('.ttf')) return 'font/ttf';
+    if (lower.endsWith('.otf')) return 'font/otf';
+    if (lower.endsWith('.mp3')) return 'audio/mpeg';
+    if (lower.endsWith('.ogg')) return 'audio/ogg';
+    if (lower.endsWith('.wav')) return 'audio/wav';
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.webm')) return 'video/webm';
+    return 'application/octet-stream';
+}
+
+function shouldSkipAssetPath(cleaned) {
+    return !cleaned || cleaned.startsWith('data:') || cleaned.startsWith('blob:') || cleaned.startsWith('http:') || cleaned.startsWith('https:') || cleaned.startsWith('#') || cleaned.startsWith('javascript:') || cleaned.startsWith('mailto:') || cleaned.startsWith('tel:');
+}
+
+function getBasename(path) {
+    const normalized = normalizePackagePath(path);
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : normalized;
+}
+
+function buildBlobLookup(blobURLs) {
+    const lookup = {};
+    for (const [path, url] of Object.entries(blobURLs || {})) {
+        if (path === '__lookup') continue;
+        const normalized = normalizePackagePath(path);
+        if (!normalized) continue;
+        const lower = normalized.toLowerCase();
+        lookup[normalized] = url;
+        lookup[lower] = url;
+        const basename = getBasename(normalized);
+        if (basename) {
+            lookup[basename] = lookup[basename] || url;
+            lookup[basename.toLowerCase()] = lookup[basename.toLowerCase()] || url;
+        }
+    }
+    return lookup;
+}
+
+function resolveBlobAssetPath(rawPath, baseDir, blobLookup) {
+    const cleaned = String(rawPath || '').trim().replace(/^['"]|['"]$/g, '');
+    if (shouldSkipAssetPath(cleaned)) return null;
+
+    const normalized = normalizePackagePath(cleaned);
+    const resolved = joinPackagePath(baseDir, cleaned);
+    const candidates = [
+        resolved,
+        normalizePackagePath(resolved).toLowerCase(),
+        normalized,
+        normalized.toLowerCase(),
+        getBasename(normalized),
+        getBasename(normalized).toLowerCase()
+    ].filter(Boolean);
+
+    const parts = normalized.split('/').filter(Boolean);
+    if (parts.length > 1) {
+        const withoutFirstDir = parts.slice(1).join('/');
+        if (withoutFirstDir) {
+            candidates.push(withoutFirstDir, withoutFirstDir.toLowerCase(), getBasename(withoutFirstDir), getBasename(withoutFirstDir).toLowerCase());
+        }
+    }
+
+    for (const candidate of candidates) {
+        if (blobLookup[candidate]) return blobLookup[candidate];
+    }
+    return null;
+}
+
+function buildAssetLookup(blobURLs) {
+    const lookup = {};
+    const put = (key, value) => {
+        const norm = normalizePackagePath(key);
+        if (!norm || !value || lookup[norm]) return;
+        lookup[norm] = value;
+    };
+    Object.entries(blobURLs || {}).forEach(([path, value]) => {
+        const norm = normalizePackagePath(path);
+        const lower = norm.toLowerCase();
+        const basename = lower.split('/').pop();
+        put(norm, value);
+        put(lower, value);
+        if (basename) {
+            put(basename, value);
+            put('./' + basename, value);
+        }
+        if (lower.includes('/')) {
+            const withoutFirst = lower.split('/').slice(1).join('/');
+            if (withoutFirst) {
+                put(withoutFirst, value);
+                put('./' + withoutFirst, value);
+                const tailBase = withoutFirst.split('/').pop();
+                if (tailBase) put(tailBase, value);
+            }
+        }
+    });
+    return lookup;
+}
+
+function replaceAssetUrlToken(rawPath, baseDir, assetLookup) {
+    const cleaned = String(rawPath || '').trim().replace(/^['"]|['"]$/g, '');
+    if (shouldSkipAssetPath(cleaned)) return null;
+    const resolved = joinPackagePath(baseDir, cleaned);
+    const normalizedResolved = normalizePackagePath(resolved);
+    const normalizedCleaned = normalizePackagePath(cleaned);
+    const basenameResolved = normalizedResolved.split('/').pop();
+    const basenameCleaned = normalizedCleaned.split('/').pop();
+    return assetLookup[normalizedResolved]
+        || assetLookup[normalizedResolved.toLowerCase()]
+        || assetLookup[normalizedCleaned]
+        || assetLookup[normalizedCleaned.toLowerCase()]
+        || (basenameResolved ? assetLookup[basenameResolved] : null)
+        || (basenameCleaned ? assetLookup[basenameCleaned] : null)
+        || null;
+}
+
+function replaceAssetRefsInCss(cssText, cssDir, assetLookup) {
+    let out = String(cssText || '');
+    out = out.replace(/url\(([^)]+)\)/g, (match, rawPath) => {
+        const replaced = replaceAssetUrlToken(rawPath, cssDir, assetLookup);
+        return replaced ? `url("${replaced}")` : match;
+    });
+    out = out.replace(/@import\s+(?:url\()?\s*(["'])([^"']+)\1\s*\)?/g, (match, quote, rawPath) => {
+        const replaced = replaceAssetUrlToken(rawPath, cssDir, assetLookup);
+        return replaced ? `@import url("${replaced}")` : match;
+    });
+    return out;
+}
+
+function replaceAssetRefsInJsText(jsText, jsDir, assetLookup) {
+    let out = String(jsText || '');
+    out = out.replace(/url\(([^)]+)\)/gi, (match, rawPath) => {
+        const replaced = replaceAssetUrlToken(rawPath, jsDir, assetLookup);
+        return replaced ? `url("${replaced}")` : match;
+    });
+    out = out.replace(/(['"`])([^'"`\n\r]+)\1/g, (match, quote, rawPath) => {
+        const candidate = String(rawPath || '').trim();
+        if (!candidate) return match;
+        const looksLikePath = /[\/\\]/.test(candidate) || /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico|css|js|mjs|json|mp3|ogg|wav|mp4|webm|woff2?|ttf|otf|html?)($|\?)/i.test(candidate);
+        if (!looksLikePath) return match;
+        const replaced = replaceAssetUrlToken(candidate, jsDir, assetLookup);
+        return replaced ? `${quote}${replaced}${quote}` : match;
+    });
+    return out;
+}
+
+function replaceAssetRefsInHtmlText(htmlText, htmlDir, assetLookup) {
+    let out = String(htmlText || '');
+
+    out = out.replace(/\b(src|href|poster|data-src|data-href|data-background)=(['"])([^"']+)\2/gi, (match, attr, quote, rawPath) => {
+        const replaced = replaceAssetUrlToken(rawPath, htmlDir, assetLookup);
+        return replaced ? `${attr}=${quote}${replaced}${quote}` : match;
+    });
+
+    out = out.replace(/\bsrcset=(['"])([^"']+)\1/gi, (match, quote, rawValue) => {
+        const rebuilt = rawValue.split(',').map(part => {
+            const trimmed = part.trim();
+            if (!trimmed) return trimmed;
+            const pieces = trimmed.split(/\s+/);
+            const candidate = pieces.shift();
+            const replaced = replaceAssetUrlToken(candidate, htmlDir, assetLookup);
+            return replaced ? [replaced].concat(pieces).join(' ') : trimmed;
+        }).join(', ');
+        return `srcset=${quote}${rebuilt}${quote}`;
+    });
+
+    out = out.replace(/url\(([^)]+)\)/gi, (match, rawPath) => {
+        const replaced = replaceAssetUrlToken(rawPath, htmlDir, assetLookup);
+        return replaced ? `url("${replaced}")` : match;
+    });
+
+    return out;
+}
+
+async function preparePackageFiles(packageContent) {
+    const zip = await JSZip.loadAsync(packageContent);
+    const files = Object.values(zip.files).filter(file => !file.dir);
+    const indexFile = zip.file('index.html') || files.find(file => /(^|\/)index\.html$/i.test(file.name));
+    if (!indexFile) throw new Error('index.html nenalezen v balíčku');
+
+    const textContents = {};
+    const blobURLs = {};
+    for (const file of files) {
+        const normalizedPath = normalizePackagePath(file.name);
+        const lower = normalizedPath.toLowerCase();
+        const mime = getMimeTypeForPath(normalizedPath);
+        if (/(\.css|\.js|\.mjs|\.json|\.svg|\.html?|\.txt|\.xml)$/i.test(lower)) {
+            const text = await file.async('string');
+            textContents[normalizedPath] = text;
+            blobURLs[normalizedPath] = URL.createObjectURL(new Blob([text], { type: mime }));
+        } else {
+            const blob = await file.async('blob');
+            blobURLs[normalizedPath] = URL.createObjectURL(new Blob([blob], { type: mime }));
+        }
+    }
+    return { zip, files, indexFile, textContents, blobURLs };
+}
+
+
+async function ensureServiceWorkerReady() {
+    if (!('serviceWorker' in navigator)) throw new Error('Service Worker není podporován.');
+    const registration = await navigator.serviceWorker.ready;
+    if (registration.active) return registration;
+    throw new Error('Service Worker ještě není aktivní.');
+}
+
+async function mountPackageInServiceWorker(packageContent, appId) {
+    const registration = await ensureServiceWorkerReady();
+    const zip = await JSZip.loadAsync(packageContent);
+    const files = Object.values(zip.files).filter(file => !file.dir);
+    const mountId = 'app-' + String(appId || Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
+    const payloadFiles = [];
+    for (const file of files) {
+        const normalizedPath = normalizePackagePath(file.name);
+        const mime = getMimeTypeForPath(normalizedPath);
+        const buffer = await file.async('arraybuffer');
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+        payloadFiles.push({
+            path: normalizedPath,
+            mime,
+            base64: btoa(binary)
+        });
+    }
+    await new Promise((resolve, reject) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (event) => {
+            if (event.data && event.data.ok) resolve();
+            else reject(new Error((event.data && event.data.error) || 'Mount selhal.'));
+        };
+        registration.active.postMessage({
+            type: 'H5OS_MOUNT_PACKAGE',
+            mountId,
+            files: payloadFiles
+        }, [channel.port2]);
+        setTimeout(() => reject(new Error('Mount timeout.')), 20000);
+    });
+    return mountId;
+}
+
+async function unmountPackageInServiceWorker(mountId) {
+    if (!('serviceWorker' in navigator) || !mountId) return;
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    if (!registration || !registration.active) return;
+    try {
+        await new Promise((resolve) => {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () => resolve();
+            registration.active.postMessage({
+                type: 'H5OS_UNMOUNT_PACKAGE',
+                mountId
+            }, [channel.port2]);
+            setTimeout(resolve, 3000);
+        });
+    } catch (e) {}
+}
+
+function buildRuntimeBootstrap(blobURLs) {
+    const assetLookup = buildAssetLookup(blobURLs);
+    const jsonMap = JSON.stringify(assetLookup).replace(/</g, '\\u003c');
+    return `<script>(function(){
+        const ASSET_MAP = ${jsonMap};
+        function n(path){ return String(path||'').replace(/\\\\/g,'/').replace(/^\.\//,'').replace(/^\//,''); }
+        function b(path){ const clean=n(path); const parts=clean.split('/').filter(Boolean); return parts.length ? parts[parts.length-1] : clean; }
+        function j(base, rel){ const bp=n(base).split('/').filter(Boolean); bp.pop(); const rp=n(rel).split('/').filter(Boolean); for(const p of rp){ if(!p||p==='.') continue; if(p==='..'){ if(bp.length) bp.pop(); } else bp.push(p); } return bp.join('/'); }
+        function skip(v){ return !v || /^(data:|blob:|https?:|#|javascript:|mailto:|tel:)/i.test(v); }
+        function basePath(){ try { const p = location.pathname || '/'; return p.endsWith('/') ? p : p.substring(0, p.lastIndexOf('/') + 1); } catch(e) { return '/'; } }
+        function r(v, base){
+            const clean=String(v||'').trim().replace(/^['"]|['"]$/g,'');
+            if(skip(clean)) return null;
+            const norm=n(clean);
+            const resolved=j(base || basePath(), clean);
+            const tries=[resolved, resolved.toLowerCase(), norm, norm.toLowerCase(), b(norm), b(norm).toLowerCase(), './'+b(norm)];
+            const parts=norm.split('/').filter(Boolean);
+            if(parts.length > 1){
+                const withoutFirst = parts.slice(1).join('/');
+                if(withoutFirst) tries.push(withoutFirst, withoutFirst.toLowerCase(), b(withoutFirst), b(withoutFirst).toLowerCase(), './'+b(withoutFirst));
+            }
+            for(const t of tries){ if(t && ASSET_MAP[t]) return ASSET_MAP[t]; }
+            return null;
+        }
+        function fixStyle(text, base){
+            return String(text||'').replace(/url\(([^)]+)\)/gi, function(m,p){
+                const x=r(p, base);
+                return x ? 'url("'+x+'")' : m;
+            });
+        }
+        function fixScriptText(text, base){
+            let out = String(text || '');
+            out = out.replace(/url\(([^)]+)\)/gi, function(m,p){
+                const x=r(p, base);
+                return x ? 'url("'+x+'")' : m;
+            });
+            out = out.replace(/"([^"]+)"|'([^']+)'/g, function(m,p1,p2){
+                const q = m[0];
+                const p = p1 || p2;
+                const c = String(p || '').trim();
+                if(!c) return m;
+                const looksLikePath = /[\/\\]/.test(c) || /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico|css|js|mjs|json|mp3|ogg|wav|mp4|webm|woff2?|ttf|otf|html?)($|\?)/i.test(c);
+                if(!looksLikePath) return m;
+                const x=r(c, base);
+                return x ? q + x + q : m;
+            });
+            return out;
+        }
+        function patchElement(el){
+            if(!el || !el.getAttribute) return;
+            ['src','href','poster','data-src','data-href','data-background'].forEach(function(attr){
+                if(el.hasAttribute && el.hasAttribute(attr)){
+                    const cur = el.getAttribute(attr);
+                    const rep = r(cur, basePath());
+                    if(rep && rep !== cur) el.setAttribute(attr, rep);
+                }
+            });
+            if(el.hasAttribute && el.hasAttribute('srcset')){
+                const cur = el.getAttribute('srcset') || '';
+                const next = cur.split(',').map(function(part){
+                    const t=part.trim(); if(!t) return t;
+                    const pcs=t.split(/\s+/); const c=pcs.shift(); const rep=r(c, basePath());
+                    return rep ? [rep].concat(pcs).join(' ') : t;
+                }).join(', ');
+                if(next !== cur) el.setAttribute('srcset', next);
+            }
+            if(el.hasAttribute && el.hasAttribute('style')){
+                const cur = el.getAttribute('style') || '';
+                const next = fixStyle(cur, basePath());
+                if(next !== cur) el.setAttribute('style', next);
+            }
+            if(el.tagName === 'SCRIPT' && !el.src){
+                const cur = el.textContent || '';
+                const next = fixScriptText(cur, basePath());
+                if(next !== cur) el.textContent = next;
+            }
+        }
+        document.querySelectorAll('*').forEach(patchElement);
+        const setAttr = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value){
+            const low = String(name||'').toLowerCase();
+            let next = value;
+            if(['src','href','poster','data-src','data-href','data-background'].includes(low)){
+                const rep = r(value, basePath()); if(rep) next = rep;
+            } else if(low === 'style') {
+                next = fixStyle(value, basePath());
+            } else if(low === 'srcset') {
+                next = String(value||'').split(',').map(function(part){
+                    const t=part.trim(); if(!t) return t;
+                    const pcs=t.split(/\s+/); const c=pcs.shift(); const rep=r(c, basePath());
+                    return rep ? [rep].concat(pcs).join(' ') : t;
+                }).join(', ');
+            }
+            return setAttr.call(this, name, next);
+        };
+        const imgDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        if (imgDesc && imgDesc.set) {
+            Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                configurable: true,
+                get: imgDesc.get,
+                set: function(value){ const rep = r(value, basePath()); return imgDesc.set.call(this, rep || value); }
+            });
+        }
+        const scriptDesc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+        if (scriptDesc && scriptDesc.set) {
+            Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+                configurable: true,
+                get: scriptDesc.get,
+                set: function(value){ const rep = r(value, basePath()); return scriptDesc.set.call(this, rep || value); }
+            });
+        }
+        const sourceDesc = (window.HTMLSourceElement && Object.getOwnPropertyDescriptor(HTMLSourceElement.prototype, 'src')) || null;
+        if (sourceDesc && sourceDesc.set) {
+            Object.defineProperty(HTMLSourceElement.prototype, 'src', {
+                configurable: true,
+                get: sourceDesc.get,
+                set: function(value){ const rep = r(value, basePath()); return sourceDesc.set.call(this, rep || value); }
+            });
+        }
+        const linkDesc = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, 'href');
+        if (linkDesc && linkDesc.set) {
+            Object.defineProperty(HTMLLinkElement.prototype, 'href', {
+                configurable: true,
+                get: linkDesc.get,
+                set: function(value){ const rep = r(value, basePath()); return linkDesc.set.call(this, rep || value); }
+            });
+        }
+        const origFetch = window.fetch;
+        window.fetch = function(input, init){
+            try {
+                if (typeof input === 'string') { const rep = r(input, basePath()); if (rep) input = rep; }
+                else if (input && input.url) { const rep = r(input.url, basePath()); if (rep) input = rep; }
+            } catch(e){}
+            return origFetch.call(this, input, init);
+        };
+        const xo = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url){
+            try { const rep = r(url, basePath()); if (rep) arguments[1] = rep; } catch(e){}
+            return xo.apply(this, arguments);
+        };
+        if (window.CSSStyleDeclaration && CSSStyleDeclaration.prototype && CSSStyleDeclaration.prototype.setProperty) {
+            const origSetProperty = CSSStyleDeclaration.prototype.setProperty;
+            CSSStyleDeclaration.prototype.setProperty = function(name, value, priority){
+                const low = String(name || '').toLowerCase();
+                if(low === 'background' || low === 'background-image' || low === 'mask' || low === 'content'){
+                    value = fixStyle(value, basePath());
+                }
+                return origSetProperty.call(this, name, value, priority);
+            };
+        }
+        const styleProto = window.CSSStyleDeclaration && CSSStyleDeclaration.prototype;
+        if (styleProto) {
+            ['background','backgroundImage','mask','content'].forEach(function(prop){
+                const desc = Object.getOwnPropertyDescriptor(styleProto, prop);
+                if(desc && desc.set){
+                    Object.defineProperty(styleProto, prop, {
+                        configurable: true,
+                        get: desc.get,
+                        set: function(value){ return desc.set.call(this, fixStyle(value, basePath())); }
+                    });
+                }
+            });
+        }
+        const mo = new MutationObserver(function(muts){
+            muts.forEach(function(m){
+                if(m.type === 'attributes') patchElement(m.target);
+                if(m.addedNodes) m.addedNodes.forEach(function(node){
+                    if(node.nodeType === 1){
+                        patchElement(node);
+                        if(node.querySelectorAll) node.querySelectorAll('*').forEach(patchElement);
+                    }
+                });
+            });
+        });
+        mo.observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['src','href','poster','style','srcset','data-src','data-href','data-background']});
+    })();<\/script>`;
+}
+
+async function buildPackageLaunchData(packageContent) {
+    const prepared = await preparePackageFiles(packageContent);
+    const { indexFile, textContents, blobURLs } = prepared;
+
+    let assetLookup = buildAssetLookup(blobURLs);
+
+    for (const path of Object.keys(textContents)) {
+        const lower = path.toLowerCase();
+        const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+        if (lower.endsWith('.css')) {
+            const processedCss = replaceAssetRefsInCss(textContents[path], dir, assetLookup);
+            textContents[path] = processedCss;
+            blobURLs[path] = URL.createObjectURL(new Blob([processedCss], { type: 'text/css' }));
+        } else if (lower.endsWith('.js') || lower.endsWith('.mjs')) {
+            const mime = lower.endsWith('.mjs') ? 'text/javascript' : getMimeTypeForPath(path);
+            const processedJs = replaceAssetRefsInJsText(textContents[path], dir, assetLookup);
+            textContents[path] = processedJs;
+            blobURLs[path] = URL.createObjectURL(new Blob([processedJs], { type: mime }));
+        }
+    }
+
+    assetLookup = buildAssetLookup(blobURLs);
+
+    const indexPath = normalizePackagePath(indexFile.name);
+    const htmlDir = indexPath.includes('/') ? indexPath.substring(0, indexPath.lastIndexOf('/')) : '';
+    const originalHtml = textContents[indexPath] || await indexFile.async('string');
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(originalHtml, 'text/html');
+
+    ['src','href','poster','data-src','data-href','data-background'].forEach(attr => {
+        doc.querySelectorAll('[' + attr + ']').forEach(el => {
+            const value = el.getAttribute(attr);
+            const replaced = replaceAssetUrlToken(value, htmlDir, assetLookup);
+            if (replaced) el.setAttribute(attr, replaced);
+        });
+    });
+
+    doc.querySelectorAll('[srcset]').forEach(el => {
+        const value = el.getAttribute('srcset') || '';
+        const rebuilt = value.split(',').map(part => {
+            const trimmed = part.trim();
+            if (!trimmed) return trimmed;
+            const pieces = trimmed.split(/\s+/);
+            const candidate = pieces.shift();
+            const replaced = replaceAssetUrlToken(candidate, htmlDir, assetLookup);
+            return replaced ? [replaced].concat(pieces).join(' ') : trimmed;
+        }).join(', ');
+        el.setAttribute('srcset', rebuilt);
+    });
+
+    doc.querySelectorAll('[style]').forEach(el => {
+        const value = el.getAttribute('style') || '';
+        const replacedStyle = value.replace(/url\(([^)]+)\)/gi, (match, rawPath) => {
+            const replaced = replaceAssetUrlToken(rawPath, htmlDir, assetLookup);
+            return replaced ? `url("${replaced}")` : match;
+        });
+        if (replacedStyle !== value) el.setAttribute('style', replacedStyle);
+    });
+
+    doc.querySelectorAll('script:not([src])').forEach(el => {
+        const current = el.textContent || '';
+        const next = replaceAssetRefsInJsText(current, htmlDir, assetLookup);
+        if (next !== current) el.textContent = next;
+    });
+
+    const bootstrap = buildRuntimeBootstrap(blobURLs);
+    if (doc.head) doc.head.insertAdjacentHTML('afterbegin', bootstrap);
+    else doc.documentElement.insertAdjacentHTML('afterbegin', '<head>' + bootstrap + '</head>');
+
+    let htmlContent = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    htmlContent = replaceAssetRefsInHtmlText(htmlContent, htmlDir, assetLookup);
+    return { htmlContent, blobURLs };
+}
+
+async function launchPackageApp(app, iframe) {
+    try {
+        if (app._mountedPackageId) {
+            await unmountPackageInServiceWorker(app._mountedPackageId);
+            app._mountedPackageId = null;
+        }
+        const canUseMountedRuntime = 'serviceWorker' in navigator && window.isSecureContext;
+        if (canUseMountedRuntime) {
+            try {
+                const mountId = await mountPackageInServiceWorker(app.content, app.id);
+                app._mountedPackageId = mountId;
+                const mountUrl = `${location.origin}/_h5mount/${mountId}/index.html`;
+                iframe.removeAttribute('srcdoc');
+                iframe.src = mountUrl;
+                return;
+            } catch (mountErr) {
+                console.warn('Mount runtime selhal, přepínám na fallback srcdoc:', mountErr);
+            }
+        }
+        const launchData = await buildPackageLaunchData(app.content);
+        iframe.srcdoc = launchData.htmlContent;
+    } catch (err) {
+        console.error('Chyba při spouštění balíčku:', err);
+        iframe.srcdoc = `<html><body>Chyba při rozbalování aplikace: ${err.message || err}</body></html>`;
+    }
+}
+
+const AVAILABLE_ICONS = ['box', 'globe', 'music', 'camera', 'gamepad-2', 'terminal', 'layout', 'image', 'folder', 'cpu', 'mail', 'phone', 'coffee', 'heart', 'star', 'tool'];
+let currentlyEditingAppIdx = null;
+let selectedIcon = 'box';
+let selectedCustomIconData = null;
+    
+        // --- PŘEKLADY ---
+        const i18n = {
+            cs: {
+                menu: "MENU", apps: "Aplikace", settings: "Nastavení", launch: "SPUSTIT",
+                drop: "Uvolněte pro instalaci", add: "Přidat", look: "Vzhled", lang: "Jazyk",
+                system: "Systém", backup: "Záloha", newApp: "Nová Aplikace", upload: "Nahrát",
+                newWidget: "Nový Widget", accentColor: "Barva akcentu", textColor: "Barva písma",
+                bgColor: "Barva pozadí", wallpaper: "Tapeta plochy", fromPc: "Z PC", fromUrl: "Z URL", enterUrl: "Vložte URL adresu obrázku:", reset: "Reset",
+                desktopEdit: "Úprava plochy", alignGrid: "Zarovnat mřížku", resetDesk: "Resetovat plochu",
+                export: "Exportovat", import: "Importovat", run: "Provést", on: "Zapnuto", off: "Vypnuto",
+                library: "Knihovna", libraryDesc: "Všechny soubory a položky", open: "Otevřít",
+                desktopFolder: "Složka na ploše", desktopFolderDesc: "Organizace aplikací a souborů", create: "Vytvořit",
+                storageChecking: "Zjišťuji místo na disku...", storageUsed: "Využito: {used} MB z {total} MB",
+                editModeColor: "Barva plochy při úpravě", iconSize: "Velikost ikon", menuStyle: "Styl nabídky Start", classicMenu: "Klasické", modernMenu: "Moderní kapsle", aboutSystem: "O systému", installPwa: "Instalovat aplikaci", aboutTitle: "Co je H5os", aboutLead: "H5os je systém pro spouštění HTML5 aplikací na počítači s plochou. Je součástí ekosystému H5 společně s mobilní variantou H5One a formáty .h5ap, .h5az a .h5wg.", aboutOpen: "Otevřený základ", aboutOpenDesc: "Staví na HTML, CSS a JavaScriptu. Díky tomu je vývoj rychlý, přehledný a snadno přenositelný.", aboutSecurity: "Vaše aplikace, vaše kontrola", aboutSecurityDesc: "Aplikace zůstávají u vás v zařízení. Vy rozhodujete, komu je poskytnete a kdy je budete sdílet.", aboutFormats: "Více způsobů balení", aboutFormatsDesc: "H5os umí pracovat s jedním HTML souborem, widgety i balíčky aplikací v archivu.", aboutAi: "Tvorba i pomocí AI", aboutAiDesc: "Aplikace lze vytvářet klasicky i s pomocí AI nástrojů, které umí generovat HTML5 kód.", aboutBenefitsTitle: "Hlavní výhody", aboutBenefit1: "Desktopové prostředí pro HTML5 aplikace", aboutBenefit2: "Podpora H5AP, H5AZ a H5WG", aboutBenefit3: "Lokální provoz a důraz na soukromí", aboutBenefit4: "Možnost tvorby bez složitého programování"
+            },
+            en: {
+                menu: "MENU", apps: "Apps", settings: "Settings", launch: "LAUNCH",
+                drop: "Drop to install", add: "Add", look: "Appearance", lang: "Language",
+                system: "System", backup: "Backup", newApp: "New App", upload: "Upload",
+                newWidget: "New Widget", accentColor: "Accent Color", textColor: "Text Color",
+                bgColor: "Background Color", wallpaper: "Desktop Wallpaper", fromPc: "From PC", fromUrl: "From URL", enterUrl: "Enter image URL:", reset: "Reset",
+                desktopEdit: "Desktop Editing", alignGrid: "Align to Grid", resetDesk: "Reset Desktop",
+                export: "Export", import: "Import", run: "Execute", on: "ON", off: "OFF",
+                library: "Library", libraryDesc: "All files and items", open: "Open",
+                desktopFolder: "Desktop Folder", desktopFolderDesc: "Organize apps and files", create: "Create",
+                storageChecking: "Checking storage...", storageUsed: "Used: {used} MB of {total} MB",
+                editModeColor: "Edit mode desktop color", iconSize: "Icon Size", menuStyle: "Start menu style", classicMenu: "Classic", modernMenu: "Capsule", aboutSystem: "About system", installPwa: "Install app", aboutTitle: "What is H5os", aboutLead: "H5os is a system for running HTML5 applications on a computer desktop. It is part of the H5 ecosystem together with the H5One mobile variant and the .h5ap, .h5az and .h5wg formats.", aboutOpen: "Open foundation", aboutOpenDesc: "It is built on HTML, CSS and JavaScript, making development fast, clear and portable.", aboutSecurity: "Your apps, your control", aboutSecurityDesc: "Applications stay on your device. You decide when and with whom to share them.", aboutFormats: "Multiple packaging options", aboutFormatsDesc: "H5os can work with a single HTML file, desktop widgets and packaged archive apps.", aboutAi: "Creation with AI", aboutAiDesc: "Apps can be created traditionally or with AI tools that generate HTML5 code.", aboutBenefitsTitle: "Main benefits", aboutBenefit1: "Desktop environment for HTML5 apps", aboutBenefit2: "Support for H5AP, H5AZ and H5WG", aboutBenefit3: "Local-first operation and privacy focus", aboutBenefit4: "Creation without complex programming"
+            },
+            de: {
+                menu: "MENÜ", apps: "Apps", settings: "Einstellungen", launch: "STARTEN",
+                drop: "Zum Installieren ablegen", add: "Hinzufügen", look: "Aussehen", lang: "Sprache",
+                system: "System", backup: "Sicherung", newApp: "Neue App", upload: "Hochladen",
+                newWidget: "Neues Widget", accentColor: "Akzentfarbe", textColor: "Textfarbe",
+                bgColor: "Hintergrundfarbe", wallpaper: "Hintergrundbild", fromPc: "Vom PC", fromUrl: "Von URL", enterUrl: "Bild-URL eingeben:", reset: "Zurücksetzen",
+                desktopEdit: "Desktop-Bearbeitung", alignGrid: "Am Raster ausrichten", resetDesk: "Desktop zurücksetzen",
+                export: "Exportieren", import: "Importieren", run: "Ausführen", on: "AN", off: "AUS",
+                library: "Bibliothek", libraryDesc: "Alle Dateien und Elemente", open: "Öffnen",
+                desktopFolder: "Desktop-Ordner", desktopFolderDesc: "Apps und Dateien organisieren", create: "Erstellen",
+                storageChecking: "Speicher wird geprüft...", storageUsed: "Belegt: {used} MB von {total} MB",
+                editModeColor: "Desktopfarbe im Bearbeitungsmodus", iconSize: "Symbolgröße", menuStyle: "Startmenü-Stil", classicMenu: "Klassisch", modernMenu: "Kapsel", aboutSystem: "Über das System", installPwa: "App installieren", aboutTitle: "Was ist H5os", aboutLead: "H5os ist ein System zum Ausführen von HTML5-Anwendungen auf einem Computer mit Desktop-Oberfläche. Es ist Teil des H5-Ökosystems zusammen mit der mobilen Variante H5One sowie den Formaten .h5ap, .h5az und .h5wg.", aboutOpen: "Offene Grundlage", aboutOpenDesc: "Es basiert auf HTML, CSS und JavaScript. Dadurch ist die Entwicklung schnell, übersichtlich und leicht übertragbar.", aboutSecurity: "Ihre Apps, Ihre Kontrolle", aboutSecurityDesc: "Anwendungen bleiben auf Ihrem Gerät. Sie entscheiden, wann und mit wem Sie sie teilen.", aboutFormats: "Mehrere Paketformen", aboutFormatsDesc: "H5os arbeitet mit einer einzelnen HTML-Datei, Desktop-Widgets und gepackten Archiv-Anwendungen.", aboutAi: "Erstellung mit KI", aboutAiDesc: "Apps können klassisch oder mit KI-Werkzeugen erstellt werden, die HTML5-Code erzeugen.", aboutBenefitsTitle: "Hauptvorteile", aboutBenefit1: "Desktop-Umgebung für HTML5-Apps", aboutBenefit2: "Unterstützung für H5AP, H5AZ und H5WG", aboutBenefit3: "Lokaler Betrieb mit Fokus auf Datenschutz", aboutBenefit4: "Erstellung ohne komplexe Programmierung"
+            },
+            es: {
+                menu: "MENÚ", apps: "Aplicaciones", settings: "Ajustes", launch: "LANZAR",
+                drop: "Soltar para instalar", add: "Añadir", look: "Apariencia", lang: "Idioma",
+                system: "Sistema", backup: "Respaldo", newApp: "Nueva App", upload: "Subir",
+                newWidget: "Nuevo Widget", accentColor: "Color de acento", textColor: "Color de texto",
+                bgColor: "Color de fondo", wallpaper: "Fondo de pantalla", fromPc: "Desde PC", fromUrl: "Desde URL", enterUrl: "Introduzca la URL de la imagen:", reset: "Restablecer",
+                desktopEdit: "Edición del escritorio", alignGrid: "Alinear a la cuadrícula", resetDesk: "Restablecer escritorio",
+                export: "Exportar", import: "Importar", run: "Ejecutar", on: "ENCENDIDO", off: "APAGADO",
+                library: "Biblioteca", libraryDesc: "Todos los archivos y elementos", open: "Abrir",
+                desktopFolder: "Carpeta del escritorio", desktopFolderDesc: "Organizar aplicaciones y archivos", create: "Crear",
+                storageChecking: "Comprobando almacenamiento...", storageUsed: "Usado: {used} MB de {total} MB",
+                editModeColor: "Color del escritorio en edición", iconSize: "Tamaño de iconos", menuStyle: "Estilo del menú Inicio", classicMenu: "Clásico", modernMenu: "Cápsula", aboutSystem: "Acerca del sistema", installPwa: "Instalar aplicación", aboutTitle: "Qué es H5os", aboutLead: "H5os es un sistema para ejecutar aplicaciones HTML5 en un ordenador con escritorio. Forma parte del ecosistema H5 junto con la variante móvil H5One y los formatos .h5ap, .h5az y .h5wg.", aboutOpen: "Base abierta", aboutOpenDesc: "Se basa en HTML, CSS y JavaScript, lo que hace que el desarrollo sea rápido, claro y portátil.", aboutSecurity: "Tus aplicaciones, tu control", aboutSecurityDesc: "Las aplicaciones permanecen en tu dispositivo. Tú decides cuándo y con quién compartirlas.", aboutFormats: "Varios modos de empaquetado", aboutFormatsDesc: "H5os puede trabajar con un solo archivo HTML, widgets de escritorio y aplicaciones empaquetadas en archivo.", aboutAi: "Creación con IA", aboutAiDesc: "Las aplicaciones pueden crearse de forma tradicional o con herramientas de IA que generan código HTML5.", aboutBenefitsTitle: "Ventajas principales", aboutBenefit1: "Entorno de escritorio para apps HTML5", aboutBenefit2: "Soporte para H5AP, H5AZ y H5WG", aboutBenefit3: "Funcionamiento local y enfoque en privacidad", aboutBenefit4: "Creación sin programación compleja"
+            },
+            fr: {
+                menu: "MENU", apps: "Applications", settings: "Paramètres", launch: "LANCER",
+                drop: "Déposer pour installer", add: "Ajouter", look: "Apparence", lang: "Langue",
+                system: "Système", backup: "Sauvegarde", newApp: "Nouvelle App", upload: "Télécharger",
+                newWidget: "Nouveau Widget", accentColor: "Couleur d'accent", textColor: "Couleur du texte",
+                bgColor: "Couleur de fond", wallpaper: "Fond d'écran", fromPc: "Depuis le PC", fromUrl: "Depuis URL", enterUrl: "Entrez l'URL de l'image :", reset: "Réinitialiser",
+                desktopEdit: "Édition du bureau", alignGrid: "Aligner sur la grille", resetDesk: "Réinitialiser le bureau",
+                export: "Exporter", import: "Importer", run: "Exécuter", on: "ACTIVÉ", off: "DÉSACTIVÉ",
+                library: "Bibliothèque", libraryDesc: "Tous les fichiers et éléments", open: "Ouvrir",
+                desktopFolder: "Dossier du bureau", desktopFolderDesc: "Organiser les applications et les fichiers", create: "Créer",
+                storageChecking: "Vérification du stockage...", storageUsed: "Utilisé : {used} MB sur {total} MB",
+                editModeColor: "Couleur du bureau en édition", iconSize: "Taille des icônes", menuStyle: "Style du menu Démarrer", classicMenu: "Classique", modernMenu: "Capsule", aboutSystem: "À propos du système", installPwa: "Installer l’application", aboutTitle: "Qu’est-ce que H5os", aboutLead: "H5os est un système pour exécuter des applications HTML5 sur un ordinateur avec un bureau. Il fait partie de l’écosystème H5 avec la variante mobile H5One et les formats .h5ap, .h5az et .h5wg.", aboutOpen: "Base ouverte", aboutOpenDesc: "Il repose sur HTML, CSS et JavaScript, ce qui rend le développement rapide, clair et portable.", aboutSecurity: "Vos applications, votre contrôle", aboutSecurityDesc: "Les applications restent sur votre appareil. Vous décidez quand et avec qui les partager.", aboutFormats: "Plusieurs modes d’emballage", aboutFormatsDesc: "H5os fonctionne avec un seul fichier HTML, des widgets de bureau et des applications empaquetées en archive.", aboutAi: "Création avec l’IA", aboutAiDesc: "Les applications peuvent être créées de manière classique ou avec des outils IA qui génèrent du code HTML5.", aboutBenefitsTitle: "Principaux avantages", aboutBenefit1: "Environnement de bureau pour les apps HTML5", aboutBenefit2: "Prise en charge de H5AP, H5AZ et H5WG", aboutBenefit3: "Fonctionnement local et respect de la vie privée", aboutBenefit4: "Création sans programmation complexe"
+            },
+            ja: {
+                menu: "メニュー", apps: "アプリ", settings: "設定", launch: "起動",
+                drop: "ドロップしてインストール", add: "追加", look: "外観", lang: "言語",
+                system: "システム", backup: "バックアップ", newApp: "新しいアプリ", upload: "アップロード",
+                newWidget: "新しいウィジェット", accentColor: "アクセントカラー", textColor: "テキストの色",
+                bgColor: "背景色", wallpaper: "壁紙", fromPc: "PCから", fromUrl: "URLから", enterUrl: "画像URLを入力:", reset: "リセット",
+                desktopEdit: "デスクトップ編集", alignGrid: "グリッドに整列", resetDesk: "デスクトップをリセット",
+                export: "エクスポート", import: "インポート", run: "実行", on: "オン", off: "オフ",
+                library: "ライブラリ", libraryDesc: "すべてのファイルと項目", open: "開く",
+                desktopFolder: "デスクトップフォルダ", desktopFolderDesc: "アプリとファイルを整理", create: "作成",
+                storageChecking: "ストレージを確認中...", storageUsed: "使用済み: {used} MB / {total} MB",
+                editModeColor: "編集時のデスクトップ色", iconSize: "アイコンサイズ", menuStyle: "スタートメニューのスタイル", classicMenu: "クラシック", modernMenu: "カプセル", aboutSystem: "システムについて", installPwa: "アプリをインストール", aboutTitle: "H5os とは", aboutLead: "H5os はデスクトップ環境を持つコンピューターで HTML5 アプリを実行するためのシステムです。モバイル版 H5One と .h5ap、.h5az、.h5wg 形式を含む H5 エコシステムの一部です。", aboutOpen: "オープンな基盤", aboutOpenDesc: "HTML、CSS、JavaScript を基盤としているため、開発が速く、分かりやすく、移植しやすいです。", aboutSecurity: "アプリも管理もあなたのもの", aboutSecurityDesc: "アプリは端末内に残ります。共有する相手とタイミングはあなたが決めます。", aboutFormats: "複数のパッケージ形式", aboutFormatsDesc: "H5os は単一 HTML ファイル、デスクトップウィジェット、アーカイブ型アプリに対応します。", aboutAi: "AI を使った作成", aboutAiDesc: "アプリは従来どおりにも、HTML5 コードを生成する AI ツールでも作成できます。", aboutBenefitsTitle: "主な利点", aboutBenefit1: "HTML5 アプリ向けのデスクトップ環境", aboutBenefit2: "H5AP、H5AZ、H5WG をサポート", aboutBenefit3: "ローカル動作とプライバシー重視", aboutBenefit4: "複雑なプログラミングなしでも作成可能"
+            }
+        };
+
+        let state = JSON.parse(localStorage.getItem('h5_v10_0_6_state')) || {
+            lang: 'cs',
+            apps: [],
+            folders: [],
+            widgets: [],
+            wallpaper: null,
+            iconScale: 1,
+            editModeColor: '#ff8a00',
+            startMenuStyle: 'modern',
+            colors: { 
+                accent: '#4ecca3', 
+                taskbar: '#0f172acc', 
+                'default-bg': '#1e2a44',
+                'text-color': '#ffffff' 
+            }
+        };
+
+        const desktop = document.getElementById('desktop');
+        const startContainer = document.getElementById('start-container');
+        const runningAppsContainer = document.getElementById('running-apps');
+        const dropIndicator = document.getElementById('drop-indicator');
+        
+        let currentMode = 'normal';
+        let zIdx = 100;
+        let activeWindows = [];
+
+        function save() { localStorage.setItem('h5_v10_0_6_state', JSON.stringify(state)); }
+
+        function ensureStateShape() {
+            state.apps = Array.isArray(state.apps) ? state.apps : [];
+            state.widgets = Array.isArray(state.widgets) ? state.widgets : [];
+            state.folders = Array.isArray(state.folders) ? state.folders : [];
+            state.editModeColor = state.editModeColor || '#ff8a00';
+            state.startMenuStyle = state.startMenuStyle || 'modern';
+            state.apps.forEach(item => {
+                if (!item.itemType) {
+                    if (item.type === 'package') item.itemType = 'package';
+                    else if (item.type === 'html') item.itemType = 'app';
+                    else item.itemType = item.type || 'app';
+                }
+                if (!('folderId' in item)) item.folderId = null;
+            });
+        }
+
+        function getItemIcon(item) {
+            if (item && item.icon) return item.icon;
+            const map = { folder:'folder', app:'app-window', package:'package', image:'image', text:'file-text', file:'file' };
+            return map[(item && (item.itemType || item.type))] || 'box';
+        }
+        function getIconMarkup(item, size = 40, extraClass = '') {
+            if (item && item.customIconData) {
+                return `<img src="${item.customIconData}" class="${extraClass}" style="width:${size}px;height:${size}px;object-fit:contain;display:block;" alt="" draggable="false">`;
+            }
+            return `<i data-lucide="${getItemIcon(item)}" class="${extraClass}" style="font-size:${size}px;"></i>`;
+        }
+        function refreshCustomIconPreview() {
+            const preview = document.getElementById('edit-custom-icon-preview');
+            if (!preview) return;
+            if (selectedCustomIconData) {
+                preview.innerHTML = `<img src="${selectedCustomIconData}" style="width:48px;height:48px;object-fit:contain;display:block;">`;
+            } else {
+                preview.innerHTML = '<div style="font-size:12px; color:#94a3b8;">Použije se výchozí ikona</div>';
+            }
+        }
+        async function readImageFileAsDataURL(file) {
+            return await new Promise((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(fr.result);
+                fr.onerror = () => reject(fr.error || new Error('Nepodařilo se načíst obrázek.'));
+                fr.readAsDataURL(file);
+            });
+        }
+        async function extractPackageCustomIcon(packageContentBlob) {
+            try {
+                const zip = await JSZip.loadAsync(packageContentBlob);
+                const iconFile = Object.values(zip.files).find(file => !file.dir && /(^|\/)ico_h5az\.(png|ico)$/i.test(String(file.name || '').replace(/\\/g, '/')));
+                if (!iconFile) return null;
+                const normalizedName = String(iconFile.name || '').replace(/\\/g, '/');
+                const ext = normalizedName.toLowerCase().endsWith('.ico') ? 'ico' : 'png';
+                const mime = ext === 'ico' ? 'image/x-icon' : 'image/png';
+                const iconBlob = await iconFile.async('blob');
+                return await readImageFileAsDataURL(new File([iconBlob], `ico_h5az.${ext}`, { type: mime }));
+            } catch (e) {
+                console.warn('Nepodařilo se načíst ico_h5az.png / ico_h5az.ico ze ZIPu:', e);
+                return null;
+            }
+        }
+        function removeCustomIcon() {
+            selectedCustomIconData = null;
+            refreshCustomIconPreview();
+        }
+        function isTextFileExt(ext) { return ['txt','md','json','js','css','csv','xml'].includes(ext); }
+        function isImageFileExt(ext) { return ['png','jpg','jpeg','webp','gif','svg','bmp','ico'].includes(ext); }
+        function isPackageFileExt(ext) { return ['zip','h5az'].includes(ext); }
+        function isHtmlAppExt(ext) { return ['html','h5ap','htm'].includes(ext); }
+        function isPackageLikeItem(item) {
+            if (!item) return false;
+            const ext = String(item.ext || '').toLowerCase();
+            const mime = String(item.mimeType || '').toLowerCase();
+            const name = String(item.name || '').toLowerCase();
+            return item.itemType === 'package' || item.type === 'package' || isPackageFileExt(ext) || mime.includes('zip') || /\.(zip|h5az)$/i.test(name);
+        }
+        function getTopLevelItems() { return state.apps.filter(item => !item.folderId); }
+        function getFolderItems(folderId) { return state.apps.filter(item => String(item.folderId) === String(folderId)); }
+        function isImageLikeItem(item) {
+            if (!item) return false;
+            const ext = String(item.ext || '').toLowerCase();
+            const mime = String(item.mimeType || '').toLowerCase();
+            const content = typeof item.content === 'string' ? item.content : '';
+            return item.itemType === 'image' || item.type === 'image' || isImageFileExt(ext) || mime.startsWith('image/') || content.startsWith('data:image/');
+        }
+
+        async function exportItem(item) {
+            if (!item) return;
+            let blob;
+            let ext = item.ext || 'txt';
+            if (item.itemType === 'package') {
+                const dbData = await getFromDB(item.id);
+                if (!dbData || !dbData.content) { alert('Soubor nebyl nalezen v úložišti.'); return; }
+                blob = dbData.content instanceof Blob ? dbData.content : new Blob([dbData.content], { type: item.mimeType || 'application/zip' });
+            } else if (typeof item.content === 'string' && item.content.startsWith('data:')) {
+                const res = await fetch(item.content);
+                blob = await res.blob();
+            } else if (typeof item.content === 'string') {
+                blob = new Blob([item.content], { type: item.mimeType || 'text/plain;charset=utf-8' });
+            } else if (item.content instanceof Blob) {
+                blob = item.content;
+            } else {
+                blob = new Blob([JSON.stringify(item, null, 2)], { type: 'application/json' });
+                ext = 'json';
+            }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${item.name || 'soubor'}.${ext}`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        }
+        window.exportCurrentItem = async () => {
+            if (currentlyEditingAppIdx === null) return;
+            await exportItem(state.apps[currentlyEditingAppIdx]);
+        };
+        function populateFolderSelect(selectedId) {
+            const select = document.getElementById('edit-folder');
+            if (!select) return;
+            select.innerHTML = '<option value="">Plocha</option>' + state.folders.map(folder => `<option value="${folder.id}">${folder.name}</option>`).join('');
+            select.value = selectedId || '';
+        }
+        function createFolder() {
+            const name = prompt('Název složky:');
+            if (!name || !name.trim()) return;
+            state.folders.push({ id: 'folder_' + Date.now(), name: name.trim(), itemType: 'folder', x: 50 + state.folders.length * 20, y: 50 + state.folders.length * 20, icon: 'folder' });
+            save(); render();
+        }
+        function openLibrary() {
+            const winId = 'win-library';
+            const existing = document.getElementById(winId);
+            if (existing) { bringToFront(winId); return; }
+            const win = document.createElement('div');
+            win.id = winId;
+            win.className = 'window';
+            win.style.cssText = `width:760px; height:520px; left:14%; top:10%; z-index:${++zIdx};`;
+            const rows = state.folders.map(folder => ({ itemType: 'folder', id: folder.id, name: folder.name, folderId: null, icon: folder.icon || 'folder' })).concat(state.apps);
+            win.innerHTML = `
+                <div class="window-header">
+                    <div class="window-title"><i data-lucide="library" size="14"></i> Knihovna</div>
+                    <div class="window-controls">
+                        <button class="control-btn btn-min" title="Minimalizovat"></button>
+                        <button class="control-btn btn-max" title="Maximalizovat"></button>
+                        <button class="control-btn btn-close" title="Zavřít"></button>
+                    </div>
+                </div>
+                <div class="window-content" style="padding:16px; overflow:auto; background:#f8fafc;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:12px;">
+                        ${rows.map((item) => `
+                            <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; padding:12px; box-shadow:0 2px 4px rgba(0,0,0,0.04);">
+                                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">${getIconMarkup(item, 16)}<strong style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.name}</strong></div>
+                                <div style="font-size:12px; color:#64748b; margin-bottom:10px;">${item.itemType}${item.folderId ? ' • ve složce' : ' • plocha'}</div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button class="btn-s" onclick="${item.itemType === 'folder' ? `launchFolderById('${item.id}')` : `launchItemById('${item.id}')`}">Otevřít</button>
+                                    ${item.itemType !== 'folder' ? `<button class="btn-p" onclick="openAppEditorById('${item.id}')">Upravit</button>` : ''}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>`;
+            win.onmousedown = () => bringToFront(winId);
+            win.querySelector('.btn-min').onclick = () => minimizeWindow(winId);
+            win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); };
+            win.querySelector('.btn-close').onclick = () => closeWindow(winId);
+            win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); };
+            setupWinResizer(win); desktop.appendChild(win);
+            if (!activeWindows.some(w => w.id === winId)) activeWindows.push({ id: winId, name: 'Knihovna', icon: 'library', minimized: false });
+            updateTaskbar(); lucide.createIcons();
+        }
+        window.launchItemById = (id) => { const item = state.apps.find(a => String(a.id) === String(id)); if (item) launchApp(item); };
+        window.openAppEditorById = (id) => { const idx = state.apps.findIndex(a => String(a.id) === String(id)); if (idx >= 0) openAppEditor(idx); };
+        window.launchFolderById = (id) => { const folder = state.folders.find(f => String(f.id) === String(id)); if (folder) launchApp(folder); };
+        ensureStateShape();
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : "78, 204, 163";
+        }
+
+        function updateStyle(prop, val) {
+            if (prop === 'taskbar' && val.length === 7) val += 'dd';
+            state.colors[prop] = val;
+            const cssVar = prop === 'accent' ? '--accent' : prop === 'taskbar' ? '--taskbar-bg' : `--${prop}`;
+            document.documentElement.style.setProperty(cssVar, val);
+            if(prop === 'accent') document.documentElement.style.setProperty('--accent-rgb', hexToRgb(val));
+            save();
+        }
+
+        function toggleSystemFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        // --- OKNO NASTAVENÍ ---
+// --- OKNO NASTAVENÍ (UPRAVENO NA OKNO) ---
+
+        function openAboutSystem() {
+            const t = i18n[state.lang];
+            const winId = 'win-about-h5os';
+            const existing = document.getElementById(winId);
+            if (existing) { bringToFront(winId); return; }
+
+            const win = document.createElement('div');
+            win.id = winId;
+            win.className = 'window';
+            win.style.cssText = `width:820px; height:580px; left:14%; top:8%; z-index:${++zIdx};`;
+            win.innerHTML = `
+                <div class="window-header">
+                    <div class="window-title"><i data-lucide="info" size="14"></i> ${t.aboutSystem}</div>
+                    <div class="window-controls">
+                        <button class="control-btn btn-min" title="Minimalizovat"></button>
+                        <button class="control-btn btn-max" title="Maximalizovat"></button>
+                        <button class="control-btn btn-close" title="Zavřít"></button>
+                    </div>
+                </div>
+                <div class="window-content" style="padding:20px; overflow:auto; background:#f8fafc; color:#1e293b;">
+                    <div style="max-width:900px; margin:0 auto;">
+                        <div style="display:flex; align-items:center; gap:14px; margin-bottom:18px;">
+                            <div style="width:56px; height:56px; border-radius:18px; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--accent), #38bdf8); color:#081018; font-weight:900; font-size:20px;">H5</div>
+                            <div>
+                                <div style="font-size:28px; font-weight:800; line-height:1.1;">${t.aboutTitle}</div>
+                                <div style="font-size:13px; color:#64748b; margin-top:4px;">H5OS 1.5.2</div>
+                            </div>
+                        </div>
+                        <p style="font-size:15px; line-height:1.7; color:#475569; margin:0 0 18px 0;">${t.aboutLead}</p>
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:18px 0 20px 0;">
+                            <div style="background:white; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+                                <div style="font-weight:800; margin-bottom:8px;">${t.aboutOpen}</div>
+                                <div style="font-size:14px; color:#64748b; line-height:1.6;">${t.aboutOpenDesc}</div>
+                            </div>
+                            <div style="background:white; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+                                <div style="font-weight:800; margin-bottom:8px;">${t.aboutSecurity}</div>
+                                <div style="font-size:14px; color:#64748b; line-height:1.6;">${t.aboutSecurityDesc}</div>
+                            </div>
+                            <div style="background:white; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+                                <div style="font-weight:800; margin-bottom:8px;">${t.aboutFormats}</div>
+                                <div style="font-size:14px; color:#64748b; line-height:1.6;">${t.aboutFormatsDesc}</div>
+                            </div>
+                            <div style="background:white; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+                                <div style="font-weight:800; margin-bottom:8px;">${t.aboutAi}</div>
+                                <div style="font-size:14px; color:#64748b; line-height:1.6;">${t.aboutAiDesc}</div>
+                            </div>
+                        </div>
+
+                        <div style="background:linear-gradient(180deg, #ffffff, #f8fafc); border:1px solid #e2e8f0; border-radius:18px; padding:18px;">
+                            <div style="font-weight:800; margin-bottom:10px;">${t.aboutBenefitsTitle}</div>
+                            <ul style="margin:0; padding-left:20px; color:#475569; line-height:1.8;">
+                                <li>${t.aboutBenefit1}</li>
+                                <li>${t.aboutBenefit2}</li>
+                                <li>${t.aboutBenefit3}</li>
+                                <li>${t.aboutBenefit4}</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="win-resizer"></div>
+                </div>`;
+            win.querySelector('.btn-min').onclick = () => minimizeWindow(winId);
+            win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); };
+            win.querySelector('.btn-close').onclick = () => closeWindow(winId);
+            win.onmousedown = () => bringToFront(winId);
+            win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); };
+            setupWinResizer(win);
+            desktop.appendChild(win);
+            activeWindows.push({ id: winId, name: t.aboutSystem, icon: 'info', minimized: false });
+            updateTaskbar();
+            lucide.createIcons();
+        }
+
+        function openSettings() {
+            const winId = 'win-settings';
+            const existing = document.getElementById(winId);
+            if(existing) { bringToFront(winId); return; }
+            
+            const t = i18n[state.lang];
+            document.documentElement.style.setProperty('--icon-scale', state.iconScale || 1);
+            
+            const win = document.createElement('div');
+            win.id = winId; 
+            win.className = 'window'; // Odstraněno app-fullscreen
+            win.style.cssText = `width:720px; height:500px; left:10%; top:10%; z-index:${++zIdx};`;
+            
+            win.innerHTML = `
+                <div class="window-header">
+                    <div class="window-title"><i data-lucide="settings" size="14"></i> ${t.settings}</div>
+                    <div class="window-controls">
+                        <button class="control-btn btn-min" title="Minimalizovat"></button>
+                        <button class="control-btn btn-max" title="Maximalizovat"></button>
+                        <button class="control-btn btn-close" title="Zavřít"></button>
+                    </div>
+                </div>
+                <div class="window-content">
+                    <div class="settings-layout">
+                        <div class="settings-sidebar">
+                            <button class="side-btn active" onclick="switchTab(this, 's-add')"><i data-lucide="plus-circle" size="16"></i> ${t.add}</button>
+                            <button class="side-btn" onclick="switchTab(this, 's-look')"><i data-lucide="palette" size="16"></i> ${t.look}</button>
+                            <button class="side-btn" onclick="switchTab(this, 's-lang')"><i data-lucide="languages" size="16"></i> ${t.lang}</button>
+                            <button class="side-btn" onclick="switchTab(this, 's-system')"><i data-lucide="monitor" size="16"></i> ${t.system}</button>
+                            <button class="side-btn" onclick="switchTab(this, 's-backup')"><i data-lucide="database" size="16"></i> ${t.backup}</button>
+                        </div>
+                        <div class="settings-main">
+                            <div id="s-add" class="settings-section active">
+                                <h3 style="margin-top:0">${t.add}</h3>
+                                <div class="settings-card">
+                                    <div class="settings-row"><div><strong>${t.newApp}</strong><br><small>.h5ap / .html / .zip / .h5az / obrázky / text</small></div><button class="btn-p" onclick="document.getElementById('app-upload-input').click()">${t.upload}</button></div>
+                                    <div class="settings-row"><div><strong>${t.newWidget}</strong><br><small>.h5wg</small></div><button class="btn-p" onclick="document.getElementById('widget-upload-input').click()">${t.upload}</button></div>
+                                    <div class="settings-row"><div><strong>${t.library}</strong><br><small>${t.libraryDesc}</small></div><button class="btn-s" onclick="openLibrary()">${t.open}</button></div>
+                                    <div class="settings-row"><div><strong>${t.desktopFolder}</strong><br><small>${t.desktopFolderDesc}</small></div><button class="btn-s" onclick="createFolder()">${t.create}</button></div>
+                                </div>
+                            </div>
+                            <div id="s-look" class="settings-section">
+                                <h3 style="margin-top:0">${t.look}</h3>
+                                <div class="settings-card">
+                                    <div class="settings-row"><span>${t.accentColor}</span><input type="color" value="${state.colors.accent}" oninput="updateStyle('accent', this.value)"></div>
+                                    <div class="settings-row"><span>${t.textColor}</span><input type="color" value="${state.colors['text-color']}" oninput="updateStyle('text-color', this.value)"></div>
+                                    <div class="settings-row"><span>${t.bgColor}</span><input type="color" value="${state.colors['default-bg']}" oninput="updateStyle('default-bg', this.value)"></div>
+                                    <div class="settings-row"><span>${t.menuStyle}</span><div style="display:flex; gap:8px;"><button class="btn-s" style="${state.startMenuStyle === 'old' ? 'background:var(--accent); color:#000;' : ''}" onclick="setTaskbarStyle('old')">${t.classicMenu}</button><button class="btn-s" style="${state.startMenuStyle !== 'old' ? 'background:var(--accent); color:#000;' : ''}" onclick="setTaskbarStyle('modern')">${t.modernMenu}</button></div></div>
+                                    <div class="settings-row">
+                                        <span>${t.wallpaper}</span>
+                                        <div style="display:flex; gap:5px;">
+                                            <button class="btn-s" onclick="document.getElementById('bg-upload').click()">${t.fromPc}</button>
+                                            <button class="btn-s" onclick="uploadFromURL()">${t.fromUrl}</button>
+                                            <button class="btn-s" onclick="state.bg=null; save(); render();">${t.reset}</button>
+                                        </div>
+                                    </div>                               
+                                </div>
+                            </div>
+                            <div id="s-lang" class="settings-section">
+                                <h3 style="margin-top:0">${t.lang}</h3>
+                                <div class="settings-card">
+                                    <div class="lang-list">
+                                        <div class="lang-option ${state.lang === 'cs' ? 'active' : ''}" onclick="setLang('cs')">🇨🇿 Čeština</div>
+                                        <div class="lang-option ${state.lang === 'en' ? 'active' : ''}" onclick="setLang('en')">🇺🇸 English</div>
+                                        <div class="lang-option ${state.lang === 'de' ? 'active' : ''}" onclick="setLang('de')">🇩🇪 Deutsch</div>
+                                        <div class="lang-option ${state.lang === 'es' ? 'active' : ''}" onclick="setLang('es')">🇪🇸 Español</div>
+                                        <div class="lang-option ${state.lang === 'fr' ? 'active' : ''}" onclick="setLang('fr')">🇫🇷 Français</div>
+                                        <div class="lang-option ${state.lang === 'ja' ? 'active' : ''}" onclick="setLang('ja')">🇯🇵 日本語</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="s-system" class="settings-section">
+                                <h3 style="margin-top:0">${t.system}</h3>
+                                <div id="storage-status" style="margin-bottom:15px; font-size:13px; padding:10px; background:rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
+                                    ${t.storageChecking}
+                                </div>
+                                <div class="settings-card">
+                                    <div class="settings-row"><div><strong>${t.desktopEdit}</strong><br><small>${t.on} / ${t.off}</small></div><button class="btn-p" onclick="setMode('rename')">${currentMode === 'rename' ? t.off : t.on}</button></div>
+                                    <div class="settings-row"><span>${t.editModeColor}</span><div style="display:flex; gap:8px; align-items:center;"><input type="color" value="${state.editModeColor || '#ff8a00'}" onchange="state.editModeColor=this.value; save(); render(); if(document.getElementById('win-settings')) openSettings();"><button class="btn-s" onclick="state.editModeColor='#ff8a00'; save(); render(); if(document.getElementById('win-settings')) openSettings();">${t.reset}</button></div></div>
+                                    <div class="settings-row"><span>${t.alignGrid}</span><button class="btn-s" onclick="autoArrange()">${t.run}</button></div>
+                                    <div class="settings-row">
+                                        <span>${t.iconSize}</span>
+                                        <div style="display:flex; gap:5px;">
+                                            <select id="scale-select" style="padding:5px; border-radius:6px;">
+                                                <option value="1">1x</option>
+                                                <option value="1.5">1.5x</option>
+                                                <option value="2">2x</option>
+                                                <option value="2.5">2.5x</option>
+                                            </select>
+                                            <button class="btn-p" onclick="applyIconScale()">${t.run}</button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="color:#ef4444;"><span>${t.resetDesk}</span><button class="btn-s" style="background:#fee2e2; color:#ef4444;" onclick="resetDesktopItems()">${t.reset}</button></div>
+                                </div>
+                            </div>
+                            <div id="s-backup" class="settings-section">
+                                <h3 style="margin-top:0">${t.backup}</h3>
+                                <div class="settings-card">
+                                    <div class="settings-row"><span>${t.export} (.json)</span><button class="btn-p" onclick="exportData()">Export</button></div>
+                                    <div class="settings-row"><span>${t.import}</span><button class="btn-s" onclick="document.getElementById('restore-upload').click()">${t.upload}</button></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="win-resizer"></div>
+                </div>
+            `;
+
+            win.onmousedown = () => bringToFront(winId);
+            win.querySelector('.btn-min').onclick = () => minimizeWindow(winId);
+            win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); };
+            win.querySelector('.btn-close').onclick = () => closeWindow(winId);
+
+            win.querySelector('.window-header').onmousedown = (e) => { 
+                if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); 
+            };
+
+            setupWinResizer(win);
+            desktop.appendChild(win);
+            
+            // Taskbar zůstává viditelný
+            syncTaskbarVisibility();
+
+            if (!activeWindows.some(w => w.id === winId)) {
+                activeWindows.push({ id: winId, name: t.settings, icon: 'settings', minimized: false });
+            }
+
+            updateTaskbar();
+            lucide.createIcons();
+            
+            // Storage info
+            if (navigator.storage && navigator.storage.estimate) {
+                navigator.storage.estimate().then(est => {
+                    const used = (est.usage / (1024 * 1024)).toFixed(1);
+                    const total = (est.quota / (1024 * 1024)).toFixed(0);
+                    const el = document.getElementById('storage-status');
+                    if(el) {
+                        const tNow = i18n[state.lang] || i18n.cs;
+                        el.innerHTML = tNow.storageUsed.replace('{used}', used).replace('{total}', total);
+                    }
+                });
+            }
+        }
+
+        window.toggleWindowFS = (id) => { document.getElementById(id).classList.toggle('app-fullscreen'); };
+
+        window.switchTab = (btn, tabId) => {
+            btn.parentElement.querySelectorAll('.side-btn').forEach(b => b.classList.remove('active'));
+            btn.closest('.settings-layout').querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        };
+
+        window.setLang = (l) => { state.lang = l; save(); render(); if(document.getElementById('win-settings')) { openSettings(); } };
+        window.setTaskbarStyle = (style) => { state.startMenuStyle = style === 'old' ? 'old' : 'modern'; save(); render(); if(document.getElementById('win-settings')) openSettings(); };
+
+        // --- CORE FUNKCE ---
+        
+const widgetBlobRegistry = new Map();
+
+function revokeWidgetBlob(id) {
+    const key = String(id);
+    const oldUrl = widgetBlobRegistry.get(key);
+    if (oldUrl) {
+        try { URL.revokeObjectURL(oldUrl); } catch (e) {}
+        widgetBlobRegistry.delete(key);
+    }
+}
+
+function buildWidgetLaunchUrl(widgetData) {
+    revokeWidgetBlob(widgetData.id);
+    const raw = String(widgetData.content || '');
+    const normalized = /<\s*html[\s>]/i.test(raw) ? raw : `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head><body>${raw}</body></html>`;
+    const blob = new Blob([normalized], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    widgetBlobRegistry.set(String(widgetData.id), url);
+    return url;
+}
+
+function render() {
+            ensureStateShape();
+            desktop.innerHTML = '';
+            document.getElementById('app-list').innerHTML = '';
+            desktop.className = currentMode + '-mode';
+            const t = i18n[state.lang];
+            document.body.classList.remove('taskbar-style-old', 'taskbar-style-modern');
+            document.body.classList.add(state.startMenuStyle === 'old' ? 'taskbar-style-old' : 'taskbar-style-modern');
+            
+            // Překlad statických prvků
+            document.getElementById('menu-tag').textContent = t.menu;
+            document.getElementById('menu-apps').textContent = t.apps;
+            document.getElementById('menu-settings').textContent = t.settings;
+            document.getElementById('menu-about-system').textContent = t.aboutSystem;
+            const installPwaEl = document.getElementById('menu-install-pwa'); if (installPwaEl) installPwaEl.textContent = t.installPwa || 'Instalovat aplikaci';
+            document.getElementById('launch-tag').textContent = t.launch;
+            document.getElementById('drop-text').textContent = t.drop;
+
+            Object.keys(state.colors).forEach(key => {
+                const cssVar = key === 'accent' ? '--accent' : key === 'taskbar' ? '--taskbar-bg' : `--${key}`;
+                document.documentElement.style.setProperty(cssVar, state.colors[key]);
+            });
+            document.documentElement.style.setProperty('--accent-rgb', hexToRgb(state.colors.accent));
+            document.body.style.backgroundImage = state.bg ? `url(${state.bg})` : 'none';
+            desktop.style.background = currentMode === 'rename' ? state.editModeColor : 'transparent';
+
+            state.widgets.forEach((w, idx) => {
+                const widget = document.createElement('div');
+                widget.className = 'widget';
+                widget.style.cssText = `left:${w.x}px; top:${w.y}px; width:${w.w}px; height:${w.h}px;`;
+                widget.innerHTML = `<div class="btn-action-circle btn-delete-item" onclick="event.stopPropagation(); deleteWidget(${idx})"><i data-lucide="x" size="18"></i></div><div class="widget-overlay"></div><div class="widget-content"><iframe id="wg-${idx}" loading="eager" referrerpolicy="no-referrer"></iframe></div><div class="widget-resizer"></div>`;
+                const ifr = widget.querySelector('iframe');
+                try {
+                    const widgetUrl = buildWidgetLaunchUrl(w);
+                    ifr.removeAttribute('srcdoc');
+                    ifr.src = widgetUrl;
+                } catch (widgetErr) {
+                    console.warn('Widget blob start selhal, pouštím srcdoc fallback:', widgetErr);
+                    ifr.srcdoc = String(w.content || '');
+                }
+                widget.querySelector('.widget-overlay').onmousedown = (e) => handleDrag(e, widget, (nx, ny) => { w.x = nx; w.y = ny; save(); });
+                setupWidgetResizer(widget, w);
+                desktop.appendChild(widget);
+            });
+
+const desktopItems = state.folders.map(folder => ({ ...folder, __isFolder:true })).concat(getTopLevelItems());
+desktopItems.forEach((app) => {
+    const icon = document.createElement('div');
+    icon.className = 'icon';
+    icon.style.transform = `scale(${state.iconScale || 1})`;
+    icon.style.left = (app.x || 50) + 'px'; 
+    icon.style.top = (app.y || 50) + 'px';
+    const isFolder = !!app.__isFolder || app.itemType === 'folder';
+    const editAction = isFolder ? '' : `<div class="btn-action-circle btn-edit-item" onclick="event.stopPropagation(); openAppEditorById('${app.id}')"><i data-lucide="settings" size="14"></i></div>`;
+    const deleteAction = `<div class="btn-action-circle btn-delete-item" onclick="event.stopPropagation(); ${isFolder ? `deleteFolder('${app.id}')` : `deleteAppById('${app.id}')`} "><i data-lucide="x" size="14"></i></div>`;
+    icon.innerHTML = `${deleteAction}${editAction}${getIconMarkup(app, 40)}<span>${app.name}</span>`;
+    icon.onmousedown = (e) => {
+        let moved = false;
+        const startX = e.clientX, startY = e.clientY;
+        handleDrag(e, icon, (nx, ny) => {
+            if (Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) moved = true;
+            app.x = Math.round(nx / 10) * 10;
+            app.y = Math.round(ny / 10) * 10;
+            if (isFolder) {
+                const folder = state.folders.find(f => String(f.id) === String(app.id));
+                if (folder) { folder.x = app.x; folder.y = app.y; }
+            } else {
+                const item = state.apps.find(a => String(a.id) === String(app.id));
+                if (item) { item.x = app.x; item.y = app.y; }
+            }
+            save();
+            icon.dataset.dragged = moved ? 'true' : 'false';
+        });
+    };
+    icon.onclick = () => {
+        if (icon.dataset.dragged === 'true') { icon.dataset.dragged = 'false'; return; }
+    };
+    icon.ondblclick = () => {
+        if (icon.dataset.dragged === 'true') { icon.dataset.dragged = 'false'; return; }
+        if (isFolder) openFolderWindow(app); else launchApp(app);
+    };
+    desktop.appendChild(icon);
+    const mi = document.createElement('button');
+    mi.className = 'menu-item';
+    mi.innerHTML = `<span class="item-label">${getIconMarkup(app, 14)} ${app.name}</span>`;
+    mi.onclick = () => { if (isFolder) openFolderWindow(app); else launchApp(app); startContainer.classList.remove('active'); };
+    document.getElementById('app-list').appendChild(mi);
+});
+            
+            
+            
+            lucide.createIcons();
+            updateTime();
+            updateTaskbar();
+// FIX: Zajistí, že lišta nezmizí, pokud není otevřené žádné fullscreen okno
+    const hasFullscreen = document.querySelector('.window.app-fullscreen');
+    document.getElementById('taskbar').style.display = hasFullscreen ? 'none' : 'flex';
+        }
+        
+
+function openFolderWindow(folder) {
+    if (!folder) return;
+    const folderId = folder.id;
+    const winId = `win-${folderId}`;
+    const existing = document.getElementById(winId);
+    if (existing) { bringToFront(winId); return; }
+
+    const items = getFolderItems(folderId);
+    const win = document.createElement('div');
+    win.id = winId;
+    win.className = 'window';
+    win.style.cssText = `width:700px; height:480px; left:16%; top:12%; z-index:${++zIdx};`;
+    win.innerHTML = `
+        <div class="window-header">
+            <div class="window-title"><i data-lucide="folder" size="14"></i> ${folder.name}</div>
+            <div class="window-controls">
+                <button class="control-btn btn-min"></button>
+                <button class="control-btn btn-max"></button>
+                <button class="control-btn btn-close"></button>
+            </div>
+        </div>
+        <div class="window-content" style="padding:16px; overflow:auto; background:#f8fafc; color:#0f172a;">
+            <div style="font-size:12px; color:#64748b; margin-bottom:14px;">Položky do složky přesuneš v editoru položky přes volbu SLOŽKA.</div>
+            <div id="folder-grid-inner" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:14px;"></div>
+        </div><div class="win-resizer"></div>`;
+    const grid = win.querySelector('#folder-grid-inner');
+
+    if (items.length === 0) {
+        grid.innerHTML = '<div style="font-size:13px; color:#64748b;">Složka je prázdná.</div>';
+    } else {
+        items.forEach(item => {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:white; border:1px solid #e2e8f0; border-radius:12px; padding:12px; text-align:center; cursor:pointer; user-select:none;';
+            card.innerHTML = `<div style="display:flex; justify-content:center; margin-bottom:8px;">${getIconMarkup(item, 28)}</div><div style="font-size:12px; line-height:1.35; word-break:break-word;">${item.name}</div>`;
+            card.ondblclick = () => launchApp(item);
+            grid.appendChild(card);
+        });
+    }
+
+    win.querySelector('.btn-min').onclick = () => minimizeWindow(winId);
+    win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); };
+    win.querySelector('.btn-close').onclick = () => closeWindow(winId);
+    win.onmousedown = () => bringToFront(winId);
+    win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); };
+    setupWinResizer(win);
+    desktop.appendChild(win);
+    activeWindows.push({ id: winId, name: folder.name, icon: 'folder', minimized: false });
+    updateTaskbar();
+    lucide.createIcons();
+}
+window.openFolderWindowById = (id) => {
+    const folder = state.folders.find(f => String(f.id) === String(id));
+    if (folder) openFolderWindow(folder);
+};
+
+
+
+function isFolderLikeItem(item) {
+    if (!item) return false;
+    return item.itemType === 'folder' || item.type === 'folder' || item.__isFolder || state.folders.some(f => String(f.id) === String(item.id));
+}
+function isTextLikeItem(item) {
+    if (!item) return false;
+    const ext = String(item.ext || '').toLowerCase();
+    const mime = String(item.mimeType || '').toLowerCase();
+    const isHtmlApp = item.itemType === 'app' || item.type === 'html' || isHtmlAppExt(ext) || mime === 'text/html';
+    if (isHtmlApp) return false;
+    return item.itemType === 'text' || item.type === 'text' || isTextFileExt(ext) || mime.startsWith('text/') || mime.includes('json') || mime.includes('javascript') || mime.includes('xml');
+}
+async function resolveItemContent(item) {
+    if (!item) return item;
+    if (typeof item.content === 'string' && item.content.length) return item.content;
+    try {
+        const dbData = await getFromDB(item.id);
+        if (!dbData || dbData.content == null) return item.content;
+        if (dbData.content instanceof Blob) {
+            if (isImageLikeItem(item)) {
+                return await new Promise((resolve) => {
+                    const r = new FileReader();
+                    r.onload = (e) => resolve(e.target.result);
+                    r.onerror = () => resolve('');
+                    r.readAsDataURL(dbData.content);
+                });
+            }
+            if (isTextLikeItem(item)) {
+                return await dbData.content.text();
+            }
+            return dbData.content;
+        }
+        return dbData.content;
+    } catch (e) {
+        return item.content;
+    }
+}
+
+async function launchApp(app) {
+    if (!app) return;
+    if (isFolderLikeItem(app)) {
+        openFolderWindow(app);
+        return;
+    }
+    let resolvedContent = await resolveItemContent(app);
+    if (typeof resolvedContent === 'string' && resolvedContent) app.content = resolvedContent;
+
+    if (isImageLikeItem(app)) {
+        if (typeof app.content !== 'string' || !app.content.startsWith('data:image/')) {
+            const winId = `win-${app.id}`;
+            const existing = document.getElementById(winId);
+            if(existing) { bringToFront(winId); return; }
+            const win = document.createElement('div');
+            win.id = winId; win.className = 'window'; win.style.cssText = `width:700px;height:520px;left:12%;top:10%;z-index:${++zIdx};`;
+            win.innerHTML = `<div class="window-header"><div class="window-title"><i data-lucide="image" size="14"></i> ${app.name}</div><div class="window-controls"><button class="control-btn btn-min"></button><button class="control-btn btn-max"></button><button class="control-btn btn-close"></button></div></div><div class="window-content" style="display:flex; align-items:center; justify-content:center; background:#111827; color:white;">Obrázek není uložen jako image data. Smaž tuto položku a nahraj soubor znovu v opravené verzi.</div><div class="win-resizer"></div>`;
+            win.querySelector('.btn-min').onclick = () => minimizeWindow(winId); win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); }; win.querySelector('.btn-close').onclick = () => closeWindow(winId); win.onmousedown = () => bringToFront(winId); win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); }; setupWinResizer(win); desktop.appendChild(win); activeWindows.push({ id: winId, name: app.name, icon: 'image', minimized: false }); updateTaskbar(); lucide.createIcons(); return;
+        }
+        const winId = `win-${app.id}`; if(document.getElementById(winId)) { bringToFront(winId); return; }
+        const win = document.createElement('div');
+        win.id = winId; win.className = 'window';
+        win.style.cssText = `width:760px; height:560px; left:12%; top:10%; z-index:${++zIdx};`;
+        win.innerHTML = `<div class="window-header"><div class="window-title"><i data-lucide="image" size="14"></i> ${app.name}</div><div class="window-controls"><button class="control-btn btn-min"></button><button class="control-btn btn-max"></button><button class="control-btn btn-close"></button></div></div><div class="window-content" style="display:flex; align-items:center; justify-content:center; background:#111827;"><img src="${app.content}" style="max-width:100%; max-height:100%; object-fit:contain;" /></div><div class="win-resizer"></div>`;
+        win.querySelector('.btn-min').onclick = () => minimizeWindow(winId); win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); }; win.querySelector('.btn-close').onclick = () => closeWindow(winId); win.onmousedown = () => bringToFront(winId); win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); }; setupWinResizer(win); desktop.appendChild(win); activeWindows.push({ id: winId, name: app.name, icon: 'image', minimized: false }); updateTaskbar(); lucide.createIcons(); return;
+    }
+    if (isTextLikeItem(app) || app.itemType === 'file' || app.type === 'file') {
+        const winId = `win-${app.id}`; if(document.getElementById(winId)) { bringToFront(winId); return; }
+        const safe = (app.content || 'Binární soubor. Použij Uložit do PC.').replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+        const win = document.createElement('div');
+        win.id = winId; win.className = 'window'; win.style.cssText = `width:760px; height:560px; left:12%; top:10%; z-index:${++zIdx};`;
+        win.innerHTML = `<div class="window-header"><div class="window-title">${getIconMarkup(app, 14)} ${app.name}</div><div class="window-controls"><button class="control-btn btn-min"></button><button class="control-btn btn-max"></button><button class="control-btn btn-close"></button></div></div><div class="window-content" style="padding:14px; overflow:auto; background:#0f172a; color:#e2e8f0;"><pre style="margin:0; white-space:pre-wrap; word-break:break-word; font-family:Consolas,monospace; font-size:13px;">${safe}</pre></div><div class="win-resizer"></div>`;
+        win.querySelector('.btn-min').onclick = () => minimizeWindow(winId); win.querySelector('.btn-max').onclick = () => {  win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; syncTaskbarVisibility(); }; win.querySelector('.btn-close').onclick = () => closeWindow(winId); win.onmousedown = () => bringToFront(winId); win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); }; setupWinResizer(win); desktop.appendChild(win); activeWindows.push({ id: winId, name: app.name, icon: getItemIcon(app), customIconData: app.customIconData || null, minimized: false }); updateTaskbar(); lucide.createIcons(); return;
+    }
+    const winId = `win-${app.id}`;
+    if(document.getElementById(winId)) { bringToFront(winId); return; }
+    let appContent = resolvedContent || app.content;
+    const isPackage = isPackageLikeItem(app);
+    if (isPackage) {
+        const dbData = await getFromDB(app.id);
+        if (dbData) appContent = dbData.content; else { console.error('Data aplikace nenalezena v DB'); return; }
+    }
+    let w = '750', h = '500';
+    if (!isPackage && typeof appContent === 'string') {
+        const parser = new DOMParser(); const doc = parser.parseFromString(appContent, 'text/html'); const sizeEl = doc.querySelector('[data-width]'); if(sizeEl) { w = sizeEl.getAttribute('data-width'); h = sizeEl.getAttribute('data-height'); }
+    }
+    const win = document.createElement('div');
+    win.id = winId; win.className = 'window app-fullscreen'; win.style.cssText = `width:${w}px; height:${h}px; left:12%; top:12%; z-index:${++zIdx};`;
+    win.innerHTML = `<div class="window-header"><div class="window-title">${getIconMarkup(app, 14)} ${app.name}</div><div class="window-controls"><button class="control-btn btn-min" title="Minimalizovat na lištu"></button><button class="control-btn btn-max" title="Fullscreen (skrýt nabídku)"></button><button class="control-btn btn-close" title="Zavřít"></button></div></div><div class="window-content"><iframe src="about:blank"></iframe><div class="win-resizer"></div></div>`;
+    win.querySelector('.btn-min').onclick = () => minimizeWindow(winId);
+    win.querySelector('.btn-max').onclick = () => {  const isFS = win.classList.toggle('app-fullscreen'); syncTaskbarVisibility();; document.getElementById('taskbar').style.display = isFS ? 'none' : 'flex'; };
+    win.querySelector('.btn-close').onclick = () => { syncTaskbarVisibility(); closeWindow(winId); };
+    win.onmousedown = () => bringToFront(winId); win.querySelector('.window-header').onmousedown = (e) => { if(!win.classList.contains('app-fullscreen')) handleDrag(e, win, () => {}); }; setupWinResizer(win); desktop.appendChild(win); document.getElementById('taskbar').style.display = 'none'; activeWindows.push({ id: winId, name: app.name, icon: getItemIcon(app), customIconData: app.customIconData || null, minimized: false }); updateTaskbar(); lucide.createIcons();
+    const iframe = win.querySelector('iframe');
+    if (isPackage) {
+        try {
+            const dbData = await getFromDB(app.id);
+            let packageContent = dbData && dbData.content ? dbData.content : null;
+            if (!packageContent && app.content instanceof Blob) packageContent = app.content;
+            if (!packageContent && typeof app.content === 'string' && app.content.startsWith('data:')) {
+                const res = await fetch(app.content);
+                packageContent = await res.blob();
+            }
+            if (!packageContent) throw new Error('Balíček nebyl nalezen v úložišti');
+            const launchData = await buildPackageLaunchData(packageContent);
+            iframe.srcdoc = launchData.htmlContent;
+        }
+        catch(err) {
+            console.error('Chyba při rozbalování balíčku:', err);
+            iframe.srcdoc = `<html><body style="font-family:Arial,sans-serif;padding:16px;">Chyba při rozbalování aplikace: ${err.message || err}<br><br>Pokud byl ZIP uložen ve staré rozbité verzi, nahraj ho znovu v této verzi.</body></html>`;
+        }
+    } else {
+        const blob = new Blob([app.content], { type: 'text/html' }); iframe.src = URL.createObjectURL(blob);
+    }
+}
+
+        window.closeWindow = (id) => { activeWindows = activeWindows.filter(w => w.id !== id); if(document.getElementById(id)) document.getElementById(id).remove(); updateTaskbar(); syncTaskbarVisibility(); };
+window.minimizeWindow = (id) => {
+    const win = document.getElementById(id);
+    if(win) {
+        win.classList.add('minimized');
+        // Při minimalizaci vždy vrátíme lištu, aby mohl uživatel přepínat aplikace
+        syncTaskbarVisibility();
+        
+        const wObj = activeWindows.find(w => w.id === id);
+        if(wObj) wObj.minimized = true;
+        updateTaskbar();
+    }
+};
+        
+function openAppEditor(idx) {
+    currentlyEditingAppIdx = idx;
+    const app = state.apps[idx];
+    document.getElementById('edit-name').value = app.name;
+    selectedIcon = app.icon || getItemIcon(app);
+    selectedCustomIconData = app.customIconData || null;
+    populateFolderSelect(app.folderId || '');
+    
+    const grid = document.getElementById('edit-icons');
+    grid.innerHTML = '';
+    AVAILABLE_ICONS.forEach(iconName => {
+        const item = document.createElement('div');
+        item.className = 'icon-choice' + (selectedIcon === iconName ? ' selected' : '');
+        item.innerHTML = `<i data-lucide="${iconName}" size="20" color="${selectedIcon === iconName ? 'var(--accent)' : 'white'}"></i>`;
+        item.onclick = () => {
+            selectedIcon = iconName;
+            document.querySelectorAll('.icon-choice').forEach(el => el.classList.remove('selected'));
+            item.classList.add('selected');
+        };
+        grid.appendChild(item);
+    });
+    
+    document.getElementById('modal-overlay').style.display = 'flex';
+    refreshCustomIconPreview();
+    lucide.createIcons();
+}
+
+function saveEdit() {
+    if(currentlyEditingAppIdx !== null) {
+        state.apps[currentlyEditingAppIdx].name = document.getElementById('edit-name').value;
+        state.apps[currentlyEditingAppIdx].icon = selectedIcon;
+        state.apps[currentlyEditingAppIdx].folderId = document.getElementById('edit-folder').value || null;
+        state.apps[currentlyEditingAppIdx].customIconData = selectedCustomIconData || null;
+        save();
+        closeModal();
+        render();
+    }
+}
+
+function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+    currentlyEditingAppIdx = null;
+    selectedCustomIconData = null;
+    const input = document.getElementById('edit-custom-icon-input'); if (input) input.value = '';
+}
+
+const editCustomIconInput = document.getElementById('edit-custom-icon-input');
+if (editCustomIconInput) {
+    editCustomIconInput.onchange = async (e) => {
+        const file = (e.target.files || [])[0];
+        if (!file) return;
+        try {
+            selectedCustomIconData = await readImageFileAsDataURL(file);
+            refreshCustomIconPreview();
+        } catch (err) {
+            alert('Nepodařilo se načíst vlastní ikonu.');
+        }
+    };
+}
+        
+        
+        
+        
+
+function syncTaskbarVisibility() {
+    const taskbar = document.getElementById('taskbar');
+    if (!taskbar) return;
+    const hasFullscreen = Array.from(document.querySelectorAll('.window.app-fullscreen'))
+        .some(el => !el.classList.contains('minimized'));
+    taskbar.style.display = hasFullscreen ? 'none' : 'flex';
+}
+
+function bringToFront(id) { 
+    let el = document.getElementById(id); 
+    
+    // Pokud okno v HTML neexistuje (stalo se po renderu), ale na liště je, znovu ho otevřeme
+    if (!el) {
+        if (id === 'win-settings') {
+            openSettings();
+            return;
+        } else {
+            // Pro ostatní aplikace najdeme data v state.apps
+            const appId = id.replace('win-', '');
+            const app = state.apps.find(a => a.id == appId);
+            if (app) launchApp(app);
+            return;
+        }
+    }
+
+    el.style.zIndex = ++zIdx; 
+    el.classList.remove('minimized'); 
+    
+    syncTaskbarVisibility();
+
+    const wObj = activeWindows.find(w => w.id === id); 
+    if(wObj) wObj.minimized = false; 
+    updateTaskbar(); 
+}
+        
+        function updateTaskbar() {
+            runningAppsContainer.innerHTML = '';
+            activeWindows.forEach(w => {
+                const btn = document.createElement('button');
+                btn.className = 'tb-btn running-app' + (w.minimized ? '' : ' active');
+                btn.innerHTML = w.customIconData ? `<img src="${w.customIconData}" style="width:20px;height:20px;object-fit:contain;display:block;" alt="">` : `<i data-lucide="${w.icon}"></i>`;
+                btn.onclick = () => bringToFront(w.id);
+                runningAppsContainer.appendChild(btn);
+            });
+            lucide.createIcons();
+        }
+
+        window.addEventListener('dragover', (e) => { e.preventDefault(); dropIndicator.style.display = 'flex'; });
+        window.addEventListener('dragleave', (e) => { if(e.relatedTarget === null) dropIndicator.style.display = 'none'; });
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault(); dropIndicator.style.display = 'none';
+            const files = Array.from(e.dataTransfer.files || []);
+            if (!files.length) return;
+            const fakeInput = { files };
+            await uploadFile({ target: fakeInput }, 'app');
+        });
+
+        function handleDrag(e, el, onEnd) {
+            const sX = e.clientX, sY = e.clientY, iX = el.offsetLeft, iY = el.offsetTop;
+            const move = (me) => { el.style.left = (iX + me.clientX - sX) + 'px'; el.style.top = (iY + me.clientY - sY) + 'px'; };
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); onEnd(el.offsetLeft, el.offsetTop); };
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+        }
+
+        function setupWinResizer(win) {
+            const r = win.querySelector('.win-resizer');
+            if (!r) return;
+            r.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                const sX = e.clientX, sY = e.clientY, sW = win.offsetWidth, sH = win.offsetHeight;
+                const move = (me) => { win.style.width = Math.max(320, sW + me.clientX - sX) + 'px'; win.style.height = Math.max(200, sH + me.clientY - sY) + 'px'; };
+                const stop = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', stop); };
+                document.addEventListener('mousemove', move); document.addEventListener('mouseup', stop);
+            };
+        }
+
+        function setupWidgetResizer(widget, wData) {
+            const r = widget.querySelector('.widget-resizer');
+            r.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                const sX = e.clientX, sY = e.clientY, sW = widget.offsetWidth, sH = widget.offsetHeight;
+                const move = (me) => { const nw = Math.max(100, sW + me.clientX - sX), nh = Math.max(80, sH + me.clientY - sY); widget.style.width = nw + 'px'; widget.style.height = nh + 'px'; wData.w = nw; wData.h = nh; };
+                const stop = () => { save(); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', stop); };
+                document.addEventListener('mousemove', move); document.addEventListener('mouseup', stop);
+            };
+        }
+
+async function uploadFile(event, type) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        const file = files[fileIndex];
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const reader = new FileReader();
+        const mime = String(file.type || '').toLowerCase();
+        const lowerName = String(file.name || '').toLowerCase();
+        const isPackageExt = isPackageFileExt(ext) || mime === 'application/zip' || mime === 'application/x-zip-compressed' || lowerName.endsWith('.h5az') || lowerName.endsWith('.zip');
+        const isImageExt = isImageFileExt(ext) || mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(lowerName);
+        const isTextExt = isTextFileExt(ext) || (mime && (mime.startsWith('text/') || mime.includes('json') || mime.includes('javascript') || mime.includes('xml')));
+        const isHtmlExt = isHtmlAppExt(ext);
+
+        await new Promise((resolve) => {
+            reader.onload = async (e) => {
+                const x = 50 + ((state.apps.length + state.folders.length) % 6) * 110;
+                const y = 50 + Math.floor((state.apps.length + state.folders.length) / 6) * 110;
+                const widgetLike = ext === 'h5wg';
+                if (type === 'app') {
+                    if (widgetLike) {
+                        state.widgets.push({ id: Date.now() + fileIndex, x, y, w: 300, h: 200, content: String(e.target.result || '') });
+                    } else if (isPackageExt) {
+                        const blob = new Blob([e.target.result], { type: file.type || 'application/zip' });
+                        const id = Date.now() + fileIndex;
+                        const name = file.name.replace(/\.(h5az|zip)$/i, '');
+                        const customIconData = await extractPackageCustomIcon(blob);
+                        await saveToDB({ id, name, content: blob, type: 'package', itemType: 'package', x, y, icon: 'package', customIconData, ext, mimeType: file.type || 'application/zip', folderId: null });
+                        state.apps.push({ id, name, type: 'package', itemType: 'package', x, y, icon: 'package', customIconData, ext, mimeType: file.type || 'application/zip', folderId: null });
+                    } else if (isHtmlExt) {
+                        state.apps.push({ id: Date.now() + fileIndex, name: file.name.replace(/\.(h5ap|html|htm)$/i, ''), content: e.target.result, type: 'html', itemType: 'app', x, y, icon: 'app-window', ext, mimeType: file.type || 'text/html', folderId: null });
+                    } else if (isImageExt) {
+                        state.apps.push({ id: Date.now() + fileIndex, name: file.name.replace(/\.[^/.]+$/i, ''), content: e.target.result, type: 'image', itemType: 'image', x, y, icon: 'image', ext, mimeType: file.type || 'image/*', folderId: null });
+                    } else if (isTextExt) {
+                        state.apps.push({ id: Date.now() + fileIndex, name: file.name.replace(/\.[^/.]+$/i, ''), content: e.target.result, type: 'text', itemType: 'text', x, y, icon: 'file-text', ext, mimeType: file.type || 'text/plain;charset=utf-8', folderId: null });
+                    } else {
+                        state.apps.push({ id: Date.now() + fileIndex, name: file.name.replace(/\.[^/.]+$/i, ''), content: 'Binární soubor. Otevři editor položky a použij Uložit do PC.', type: 'file', itemType: 'file', x, y, icon: 'file', ext: ext || 'bin', mimeType: file.type || 'application/octet-stream', folderId: null });
+                    }
+                } else if (type === 'widget') {
+                    state.widgets.push({ id: Date.now() + fileIndex, x, y, w: 300, h: 200, content: String(e.target.result || '') });
+                } else if (type === 'bg') {
+                    state.bg = e.target.result;
+                }
+                resolve();
+            };
+            if (type === 'app' && isPackageExt) reader.readAsArrayBuffer(file);
+            else if (type === 'bg' || (type === 'app' && isImageExt)) reader.readAsDataURL(file);
+            else if (type === 'app' && isTextExt && !isHtmlExt) {
+                readFileAsTextSmart(file).then((txt) => {
+                    reader.onload({ target: { result: txt } });
+                });
+            }
+            else reader.readAsText(file, 'utf-8');
+        });
+    }
+    save();
+    render();
+    event.target.value = '';
+}
+
+
+function decodeTextSmartFromArrayBuffer(buffer) {
+    const tryDecode = (encoding) => {
+        try {
+            return new TextDecoder(encoding, { fatal: false }).decode(buffer);
+        } catch (e) {
+            return null;
+        }
+    };
+    const utf8 = tryDecode('utf-8') || '';
+    const badUtf8 = (utf8.match(/�/g) || []).length;
+    if (badUtf8 === 0) return utf8;
+    const cp1250 = tryDecode('windows-1250');
+    const iso2 = tryDecode('iso-8859-2');
+    const score = (str) => str ? (str.match(/�/g) || []).length : 999999;
+    const candidates = [utf8, cp1250, iso2].filter(Boolean);
+    candidates.sort((a, b) => score(a) - score(b));
+    return candidates[0] || utf8;
+}
+
+async function readFileAsTextSmart(file) {
+    const buffer = await file.arrayBuffer();
+    return decodeTextSmartFromArrayBuffer(buffer);
+}
+
+function uploadFromURL() {
+    const t = i18n[state.lang]; 
+    const url = prompt(t.enterUrl);
+    
+    if (url && url.trim() !== "") {
+        state.bg = url; // Změněno z wallpaper na bg
+        save();
+        render();
+        
+        // Zajištění, aby lišta nezmizela (pokud není okno ve fullscreenu)
+        const hasFS = document.querySelector('.window.app-fullscreen');
+        document.getElementById('taskbar').style.display = hasFS ? 'none' : 'flex';
+    }
+}
+
+async function exportData() { // Ponechal jsem název exportData, aby ti fungovalo tlačítko
+    const db = await openDB();
+    const tx = db.transaction(storeName, "readonly");
+    const allApps = await new Promise(res => {
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => res(req.result);
+    });
+
+    const processedApps = await Promise.all(allApps.map(async app => {
+        if (app.content instanceof Blob) {
+            const reader = new FileReader();
+            const base64 = await new Promise(res => {
+                reader.onloadend = () => res(reader.result);
+                reader.readAsDataURL(app.content);
+            });
+            return { ...app, content: base64, isBinary: true };
+        }
+        return app;
+    }));
+
+    const exportDataObj = {
+        state: state,
+        fullApps: processedApps
+    };
+
+    const blob = new Blob([JSON.stringify(exportDataObj)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `H5OS_backup_${Date.now()}.json`;
+    a.click();
+}        
+document.getElementById('bg-upload').onchange = (e) => { 
+    const r = new FileReader(); 
+    r.onload = (ev) => { 
+        state.bg = ev.target.result; // Opraveno z wallpaper na bg
+        save(); 
+        render(); 
+    }; 
+    r.readAsDataURL(e.target.files[0]); 
+};
+document.getElementById('restore-upload').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+        const data = JSON.parse(ev.target.result);
+        
+        // 1. Obnova stavu (ikon, pozadí, atd.)
+        state = data.state;
+        save();
+
+        // 2. Obnova aplikací do IndexedDB
+        if (data.fullApps) {
+            for (let appData of data.fullApps) {
+                if (appData.isBinary) {
+                    const res = await fetch(appData.content);
+                    appData.content = await res.blob();
+                    delete appData.isBinary;
+                }
+                await saveToDB(appData); // Tady se volá tvá nová funkce pro DB
+            }
+        }
+        location.reload(); 
+    };
+    reader.readAsText(file);
+};
+        
+        function updateTime() { 
+            const n = new Date(); 
+            const locales = { cs: 'cs-CZ', en: 'en-US', de: 'de-DE', es: 'es-ES', fr: 'fr-FR', ja: 'ja-JP' };
+            const l = locales[state.lang] || 'en-US';
+            document.getElementById('clock-t').textContent = n.toLocaleTimeString(l, {hour:'2-digit', minute:'2-digit'}); 
+            document.getElementById('clock-d').textContent = n.toLocaleDateString(l); 
+        }
+
+        function autoArrange() { 
+    const grid = 110, cols = Math.floor(window.innerWidth / grid); 
+    state.apps.forEach((app, i) => { 
+        app.x = (i % cols) * grid + 20; 
+        app.y = Math.floor(i / cols) * grid + 20; 
+    }); 
+    save(); 
+    render(); 
+    // Pokud bylo nastavení otevřené, znovu ho vykreslíme
+    if (activeWindows.some(w => w.id === 'win-settings')) {
+        openSettings();
+    }
+}
+function resetDesktopItems() { 
+    const t = i18n[state.lang];
+    const msg = (t.resetDesk || 'Resetovat plochu') + '?\n\nTato akce provede tovární nastavení: smaže ikony, složky, widgety, uložené soubory i databázi této verze.';
+    if (confirm(msg)) {
+        try { localStorage.removeItem('h5_v10_0_6_state'); } catch (e) {}
+        try {
+            const req = indexedDB.deleteDatabase(dbName);
+            req.onsuccess = () => location.reload();
+            req.onerror = () => location.reload();
+            req.onblocked = () => location.reload();
+            setTimeout(() => location.reload(), 500);
+        } catch (e) {
+            location.reload();
+        }
+    }
+}
+        async function deleteFromDB(id) { const db = await openDB(); const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(id); }
+        function deleteApp(idx) { const item = state.apps[idx]; if (item && item.itemType === 'package') deleteFromDB(item.id); state.apps.splice(idx, 1); save(); render(); }
+        function deleteAppById(id) { const idx = state.apps.findIndex(a => String(a.id) === String(id)); if (idx >= 0) deleteApp(idx); }
+        function deleteFolder(id) { state.apps.forEach(item => { if (String(item.folderId) === String(id)) item.folderId = null; }); state.folders = state.folders.filter(f => String(f.id) !== String(id)); save(); render(); }
+        function deleteWidget(idx) { const removed = state.widgets[idx]; if (removed) revokeWidgetBlob(removed.id); state.widgets.splice(idx, 1); save(); render(); }
+        function toggleSub(id, e) { e.stopPropagation(); document.querySelectorAll('.menu-panel.sub').forEach(p => { if(p.id !== 'sub-'+id) p.classList.remove('active'); }); document.getElementById('sub-'+id).classList.toggle('active'); }
+
+        document.getElementById('app-upload-input').onchange = (e) => uploadFile(e, 'app');
+        document.getElementById('widget-upload-input').onchange = (e) => uploadFile(e, 'widget');
+        document.getElementById('start-btn').onclick = (e) => { e.stopPropagation(); startContainer.classList.toggle('active'); };
+        document.addEventListener('click', (e) => { if (!e.target.closest('#start-container') && !e.target.closest('#start-btn')) startContainer.classList.remove('active'); });
+
+        updateTime();
+        setInterval(updateTime, 1000);
+        updateEditModeButton();
+        
+function applyIconScale() {
+    const val = parseFloat(document.getElementById('scale-select').value);
+    state.iconScale = val;
+    save();
+    render();
+}
+
+function setMode(mode) {
+    // Pokud klikneme na stejný mód, vypneme ho (zpět do normal)
+    if (currentMode === mode) {
+        currentMode = 'normal';
+    } else {
+        currentMode = mode;
+    }
+    
+    // Znovu vykreslíme plochu (aplikuje se CSS třída .rename-mode)
+    render();
+    updateEditModeButton();
+    
+    // Pokud je otevřené okno nastavení, aktualizujeme ho, aby tlačítko změnilo text
+    if (document.getElementById('win-settings')) {
+        openSettings();
+    }
+}
+
+
+function updateEditModeButton() {
+    const btn = document.getElementById('edit-mode-btn');
+    if (!btn) return;
+    btn.style.background = currentMode === 'rename' ? state.editModeColor : 'transparent';
+    btn.style.color = currentMode === 'rename' ? 'var(--accent)' : 'var(--text-color)';
+    btn.title = currentMode === 'rename' ? 'Vypnout úpravu plochy' : 'Zapnout úpravu plochy';
+}
+
+function toggleEditMode() {
+    setMode('rename');
+}
+
+const CURRENT_APP_VERSION = '1.5.2';
+let deferredPwaPrompt = null;
+let pwaUpdateReady = false;
+let remoteAppVersion = CURRENT_APP_VERSION;
+
+function getPwaMenuElements() {
+    return {
+        button: document.getElementById('menu-install-pwa-btn'),
+        label: document.getElementById('menu-install-pwa')
+    };
+}
+
+function setPwaMenuState(mode) {
+    const { button, label } = getPwaMenuElements();
+    if (!button || !label) return;
+
+    if (mode === 'install') {
+        button.style.display = '';
+        button.dataset.action = 'install';
+        label.textContent = 'Instalovat aplikaci';
+        return;
+    }
+    if (mode === 'update') {
+        button.style.display = '';
+        button.dataset.action = 'update';
+        label.textContent = 'Aktualizovat aplikaci';
+        return;
+    }
+    button.style.display = 'none';
+    button.dataset.action = 'hidden';
+}
+
+function isRunningInstalledPwa() {
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true || document.referrer.startsWith('android-app://');
+}
+
+function compareVersions(a, b) {
+    const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+        const av = pa[i] || 0;
+        const bv = pb[i] || 0;
+        if (av > bv) return 1;
+        if (av < bv) return -1;
+    }
+    return 0;
+}
+
+async function fetchRemoteAppVersion() {
+    try {
+        const res = await fetch('./service-worker.js?check=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return CURRENT_APP_VERSION;
+        const text = await res.text();
+        const match = text.match(/APP_VERSION\s*=\s*['\"]([^'\"]+)['\"]/);
+        return match ? match[1] : CURRENT_APP_VERSION;
+    } catch (e) {
+        return CURRENT_APP_VERSION;
+    }
+}
+
+async function refreshPwaMenuState() {
+    const installed = isRunningInstalledPwa();
+    remoteAppVersion = await fetchRemoteAppVersion();
+
+    if (installed) {
+        if (compareVersions(remoteAppVersion, CURRENT_APP_VERSION) > 0) {
+            pwaUpdateReady = true;
+            setPwaMenuState('update');
+            return;
+        }
+        pwaUpdateReady = false;
+        setPwaMenuState('hidden');
+        return;
+    }
+
+    if (deferredPwaPrompt) {
+        pwaUpdateReady = false;
+        setPwaMenuState('install');
+        return;
+    }
+
+    pwaUpdateReady = false;
+    setPwaMenuState('hidden');
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPwaPrompt = e;
+    refreshPwaMenuState();
+});
+
+window.addEventListener('appinstalled', () => {
+    deferredPwaPrompt = null;
+    pwaUpdateReady = false;
+    setPwaMenuState('hidden');
+});
+
+async function promptPwaInstall() {
+    if (!deferredPwaPrompt) {
+        alert('Instalace PWA teď není dostupná. Zkus stránku otevřít přes HTTPS nebo podporovaný prohlížeč.');
+        return;
+    }
+    deferredPwaPrompt.prompt();
+    try { await deferredPwaPrompt.userChoice; } catch (e) {}
+    deferredPwaPrompt = null;
+    await refreshPwaMenuState();
+}
+
+async function applyPwaUpdate() {
+    if (!('serviceWorker' in navigator)) return;
+    const registration = await navigator.serviceWorker.getRegistration().catch(() => null);
+    if (!registration) {
+        pwaUpdateReady = false;
+        setPwaMenuState('hidden');
+        return;
+    }
+
+    await registration.update().catch(() => {});
+    if (registration.waiting) {
+        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        pwaUpdateReady = false;
+        setPwaMenuState('hidden');
+        return;
+    }
+
+    const latest = await fetchRemoteAppVersion();
+    if (compareVersions(latest, CURRENT_APP_VERSION) <= 0) {
+        pwaUpdateReady = false;
+        setPwaMenuState('hidden');
+        return;
+    }
+
+    alert('Byla nalezena novější verze, ale ještě není připravená v Service Workeru. Obnov stránku a zkus aktualizaci znovu.');
+}
+
+async function handlePwaMenuAction() {
+    const { button } = getPwaMenuElements();
+    const action = button ? button.dataset.action : '';
+    if (action === 'install') return await promptPwaInstall();
+    if (action === 'update') return await applyPwaUpdate();
+}
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js?v=1.5.2')
+            .then(async (registration) => {
+                if (registration.waiting && isRunningInstalledPwa()) {
+                    pwaUpdateReady = true;
+                    setPwaMenuState('update');
+                }
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    if (!newWorker) return;
+                    newWorker.addEventListener('statechange', async () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller && isRunningInstalledPwa()) {
+                            pwaUpdateReady = true;
+                            setPwaMenuState('update');
+                        } else {
+                            await refreshPwaMenuState();
+                        }
+                    });
+                });
+                await refreshPwaMenuState();
+            })
+            .catch(err => console.warn('PWA registrace selhala:', err));
+    });
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        pwaUpdateReady = false;
+        setPwaMenuState('hidden');
+        window.location.reload();
+    });
+}
+
+window.onload = () => {
+    render();
+    updateEditModeButton();
+    syncTaskbarVisibility();
+    refreshPwaMenuState();
+    if (window.lucide) lucide.createIcons();
+};
+
+    </script>
+</body>
+</html>
